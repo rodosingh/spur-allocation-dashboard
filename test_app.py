@@ -135,19 +135,48 @@ class BridgeValidationTests(unittest.TestCase):
         self.assertEqual(environment["NODEHOLD_REPIN"], "1")
         self.assertEqual(result["jobIds"], ["123"])
 
+    @patch.object(holder, "get_status")
     @patch.object(holder.scheduler, "run_command", return_value="done")
-    def test_only_safe_chain_actions_are_callable(self, run):
-        holder.run_chain_action(f"{holder.CHAIN_PREFIX}-demo", "release")
-        self.assertEqual(run.call_args.args[0][-2:], ["demo", "release"])
+    def test_only_safe_chain_actions_are_callable(self, run, status):
+        status.return_value = {"chains": [{"name": "hold-demo"}]}
+        holder.run_chain_action("hold-demo", "release")
+        self.assertEqual(run.call_args.args[0][-1], "release")
+        self.assertEqual(run.call_args.kwargs["env"]["NODEHOLD_NAME"], "hold-demo")
         with self.assertRaisesRegex(ValueError, "Unsupported"):
-            holder.run_chain_action(f"{holder.CHAIN_PREFIX}-demo", "tick")
+            holder.run_chain_action("hold-demo", "tick")
 
+    @patch.object(holder, "get_status", return_value={"chains": []})
     @patch.object(holder.scheduler, "run_command", return_value="done")
-    def test_chain_action_refuses_names_outside_the_active_prefix(self, run):
-        with patch.object(holder, "CHAIN_PREFIX", "interactive"):
-            with self.assertRaisesRegex(ValueError, "not a chain under"):
-                holder.run_chain_action("hold-demo", "release")
+    def test_chain_action_refuses_unknown_or_inactive_names(self, run, _status):
+        with self.assertRaisesRegex(ValueError, "not an active maintained chain"):
+            holder.run_chain_action("hold-demo", "release")
         run.assert_not_called()
+
+    @patch.object(holder, "_run_json")
+    @patch.object(holder.scheduler, "get_queue")
+    def test_status_discovers_active_chains_across_prefixes(self, queue, run_json):
+        queue.return_value = [
+            {"name": "hold-a"},
+            {"name": "team-b"},
+            {"name": "ordinary-job"},
+        ]
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            holder, "STATE_DIR", Path(directory)
+        ):
+            Path(directory, "hold-a.conf").touch()
+            Path(directory, "team-b.conf").touch()
+            run_json.side_effect = lambda _command, prefix=None: {
+                "chains": [{"name": prefix}]
+            }
+            payload = holder.get_status()
+        self.assertEqual(
+            [chain["name"] for chain in payload["chains"]],
+            ["hold-a", "team-b"],
+        )
+        self.assertEqual(
+            [call.kwargs["prefix"] for call in run_json.call_args_list],
+            ["hold-a", "team-b"],
+        )
 
 
 class SchedulerTests(unittest.TestCase):

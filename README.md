@@ -142,17 +142,22 @@ overridable:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `NODEHOLD_NAME` | `interactive` | Chain prefix, same meaning as in `node_holder.sh` |
-| `SPUR_DASHBOARD_CHAIN_PREFIX` | `$NODEHOLD_NAME` | Override the prefix for the dashboard only |
+| `NODEHOLD_NAME` | `interactive` | Prefix used when the dashboard creates a new chain |
+| `SPUR_DASHBOARD_CHAIN_PREFIX` | `$NODEHOLD_NAME` | Override the new-chain prefix for the dashboard only |
 | `NODEHOLD_MIN_PRIO` | `10000` | Priority floor, shared with `node_holder.sh` |
 | `SPUR_DASHBOARD_NODE_HOLDER` | `./node_holder.sh` | Path to a compatible script |
 | `SPUR_DASHBOARD_PARTITION` | `amd-spur` | Scheduler partition |
 | `SPUR_DASHBOARD_STATE_DIR` | `~/.spur-dashboard` | Request history location |
 | `SPUR_DASHBOARD_READ_ONLY` | unset | `1` disables all mutations |
 
-The chain prefix follows `NODEHOLD_NAME`, so the dashboard shows the same chains
-your shell does. If you keep `hold-*` chains, either export `NODEHOLD_NAME=hold`
-(as your shell already does) or start the server with it:
+Existing maintained chains are discovered from active queue names plus their
+saved `~/.node_holder/<name>.conf` profiles, regardless of prefix. You therefore
+see and can release `hold-*`, `interactive-*`, and other prefixes in one
+dashboard without configuring anything.
+
+The prefix only controls names of **new chains** submitted from the dashboard.
+If you want new chains to follow a convention such as `hold-*`, start the
+server with:
 
 ```bash
 NODEHOLD_NAME=hold python3 app.py

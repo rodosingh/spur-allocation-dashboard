@@ -54,15 +54,16 @@ def capabilities() -> dict[str, Any]:
 def build_status() -> dict[str, Any]:
     errors: dict[str, str] = {}
     try:
-        chain_status = holder.get_status()
-    except (scheduler.SchedulerCommandError, holder.BridgeError) as error:
-        chain_status = {"chains": []}
-        errors["chains"] = str(error)
-    try:
         jobs = scheduler.get_queue("mine")
     except scheduler.SchedulerCommandError as error:
         jobs = []
         errors["queue"] = str(error)
+    try:
+        chain_status = holder.get_status(jobs)
+    except (scheduler.SchedulerCommandError, holder.BridgeError) as error:
+        chain_status = {"chains": []}
+        errors["chains"] = str(error)
+    errors.update(chain_status.get("errors", {}))
 
     chain_names = holder.chain_names(chain_status)
     for job in jobs:
@@ -71,21 +72,17 @@ def build_status() -> dict[str, Any]:
     chains = chain_status.get("chains", [])
     for chain in chains:
         name = str(chain.get("name", ""))
-        tag = str(chain.get("tag", ""))
-        cli_name = [] if tag == "(default)" else ["-n", tag]
         chain["copyShellCommand"] = " ".join(
             [
-                f"NODEHOLD_NAME={holder.CHAIN_PREFIX}",
+                f"NODEHOLD_NAME={name}",
                 str(holder.NODE_HOLDER),
-                *cli_name,
                 "shell",
             ]
         )
         chain["copyExecPrefix"] = " ".join(
             [
-                f"NODEHOLD_NAME={holder.CHAIN_PREFIX}",
+                f"NODEHOLD_NAME={name}",
                 str(holder.NODE_HOLDER),
-                *cli_name,
                 "exec",
             ]
         )

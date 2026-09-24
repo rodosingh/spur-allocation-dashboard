@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parent
 NODE_HOLDER = Path(
     os.environ.get("SPUR_DASHBOARD_NODE_HOLDER", ROOT / "node_holder.sh")
 ).resolve()
+STATE_DIR = Path(
+    os.environ.get("NODEHOLD_DIR", Path.home() / ".node_holder")
+).expanduser()
 # node_holder derives its own prefix from NODEHOLD_NAME and falls back to
 # "interactive", so follow that rather than any one person's naming habit. A
 # user who exports NODEHOLD_NAME then sees the same chains here as on the CLI.
@@ -36,18 +39,18 @@ class BridgeError(RuntimeError):
     """node_holder returned malformed output."""
 
 
-def _environment(**overrides: str) -> dict[str, str]:
+def _environment(*, prefix: str | None = None, **overrides: str) -> dict[str, str]:
     environment = dict(os.environ)
-    environment["NODEHOLD_NAME"] = CHAIN_PREFIX
+    environment["NODEHOLD_NAME"] = prefix or CHAIN_PREFIX
     environment.update(overrides)
     return environment
 
 
-def _run_json(command: str) -> dict[str, Any]:
+def _run_json(command: str, *, prefix: str | None = None) -> dict[str, Any]:
     output = scheduler.run_command(
         [str(NODE_HOLDER), command],
         timeout=60,
-        env=_environment(),
+        env=_environment(prefix=prefix),
     )
     try:
         payload = json.loads(output)
@@ -62,8 +65,54 @@ def get_pools() -> dict[str, Any]:
     return _run_json("pools-json")
 
 
-def get_status() -> dict[str, Any]:
-    return _run_json("status-json")
+def _active_managed_names(jobs: list[dict[str, Any]]) -> list[str]:
+    """Find active node_holder names without assuming one naming prefix."""
+    active = {
+        str(job.get("name", ""))
+        for job in jobs
+        if CHAIN_NAME_RE.fullmatch(str(job.get("name", "")))
+    }
+    managed = {
+        name for name in active if (STATE_DIR / f"{name}.conf").is_file()
+    }
+    # A race member normally has a profile, but include its explicit membership
+    # as a recovery path for a partially-created or older chain.
+    for race in STATE_DIR.glob("*.race"):
+        try:
+            lines = race.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            name = line.split("|", 1)[0]
+            if name in active:
+                managed.add(name)
+    return sorted(managed)
+
+
+def get_status(jobs: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Return every active maintained chain, regardless of its original prefix."""
+    current_jobs = jobs if jobs is not None else scheduler.get_queue("mine")
+    chains: list[dict[str, Any]] = []
+    errors: dict[str, str] = {}
+    for name in _active_managed_names(current_jobs):
+        try:
+            payload = _run_json("status-json", prefix=name)
+        except (scheduler.SchedulerCommandError, BridgeError) as error:
+            errors[name] = str(error)
+            continue
+        exact = next(
+            (chain for chain in payload.get("chains", []) if chain.get("name") == name),
+            None,
+        )
+        if exact:
+            chains.append(exact)
+    return {
+        "schemaVersion": 1,
+        "user": scheduler.USERNAME,
+        "prefix": CHAIN_PREFIX,
+        "chains": chains,
+        "errors": errors,
+    }
 
 
 def get_doctor() -> dict[str, Any]:
@@ -327,21 +376,20 @@ def run_chain_action(name: str, action: str, value: object = None) -> dict[str, 
         raise ValueError("Unsupported chain action")
     if not CHAIN_NAME_RE.fullmatch(name):
         raise ValueError("Invalid chain name")
-    # Refuse rather than re-prefix: passing an unmatched name through as a tag
-    # would act on a different chain than the caller named.
-    if name == CHAIN_PREFIX:
-        tag = ""
-    elif name.startswith(f"{CHAIN_PREFIX}-"):
-        tag = name[len(CHAIN_PREFIX) + 1 :]
-    else:
-        raise ValueError(f"'{name}' is not a chain under the '{CHAIN_PREFIX}' prefix")
+    if name not in chain_names(get_status()):
+        raise ValueError(f"'{name}' is not an active maintained chain")
+
+    # Treat the full scheduler name as node_holder's default chain. This avoids
+    # needing to reconstruct the prefix/tag split used when the chain began.
     command = [str(NODE_HOLDER)]
-    if tag:
-        command.extend(["-n", tag])
     command.append(action)
     if action == "shrink":
         command.append(str(_integer(value, "Depth", 0, 64, default=0)))
-    output = scheduler.run_command(command, timeout=180, env=_environment())
+    output = scheduler.run_command(
+        command,
+        timeout=180,
+        env=_environment(prefix=name),
+    )
     return {"chainName": name, "action": action, "output": output}
 
 
