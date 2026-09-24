@@ -132,8 +132,10 @@ Normal mode submits one finite job using direct `sbatch`. It requests the same
 account/QoS/resources but has no successors or cron maintenance. Its end-session
 action runs `scancel <jobid>`.
 
-Normal jobs may not use the active chain prefix. This prevents the dashboard
-from ever treating a normal job as a maintained chain.
+Chain jobs are named `hold-<name>` and normal jobs `interactive-<name>`, so the
+two are distinct in the scheduler. Chains are additionally identified by their
+saved `~/.node_holder/<name>.conf` profiles, so a normal job never counts as a
+maintained chain even if it shares a prefix.
 
 ## Configuration
 
@@ -142,8 +144,9 @@ overridable:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `NODEHOLD_NAME` | `interactive` | Prefix used when the dashboard creates a new chain |
+| `NODEHOLD_NAME` | `hold` | Prefix for new maintained chains (`hold-<name>`) |
 | `SPUR_DASHBOARD_CHAIN_PREFIX` | `$NODEHOLD_NAME` | Override the new-chain prefix for the dashboard only |
+| `SPUR_DASHBOARD_NORMAL_PREFIX` | `interactive` | Prefix for normal one-off jobs (`interactive-<name>`) |
 | `NODEHOLD_MIN_PRIO` | `10000` | Priority floor, shared with `node_holder.sh` |
 | `SPUR_DASHBOARD_NODE_HOLDER` | `./node_holder.sh` | Path to a compatible script |
 | `SPUR_DASHBOARD_PARTITION` | `amd-spur` | Scheduler partition |

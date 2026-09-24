@@ -36,6 +36,7 @@ def capabilities() -> dict[str, Any]:
     return {
         "schemaVersion": 1,
         "chainPrefix": holder.CHAIN_PREFIX,
+        "normalPrefix": holder.NORMAL_PREFIX,
         "minPriority": holder.MIN_PRIORITY,
         "partition": scheduler.PARTITION,
         "user": scheduler.USERNAME,

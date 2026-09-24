@@ -93,14 +93,26 @@ class BridgeValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "chain depth can be at most 3"):
             holder.validate_request(burst, POOLS)
 
-    def test_normal_jobs_cannot_impersonate_chain_names(self):
-        with self.assertRaisesRegex(ValueError, "maintained-chain prefix"):
-            holder.validate_request(
-                valid_payload(
-                    mode="normal", jobName=f"{holder.CHAIN_PREFIX}-demo"
-                ),
-                POOLS,
-            )
+    def test_chain_and_normal_names_get_their_prefixes(self):
+        chain = holder.validate_request(
+            valid_payload(mode="chain", jobName="run"), POOLS
+        )
+        self.assertEqual(chain["tag"], "run")
+        self.assertEqual(chain["jobName"], f"{holder.CHAIN_PREFIX}-run")
+        normal = holder.validate_request(
+            valid_payload(mode="normal", jobName="run"), POOLS
+        )
+        self.assertEqual(normal["jobName"], f"{holder.NORMAL_PREFIX}-run")
+
+    def test_typed_prefix_is_not_doubled(self):
+        chain = holder.validate_request(
+            valid_payload(mode="chain", jobName=f"{holder.CHAIN_PREFIX}-run"), POOLS
+        )
+        self.assertEqual(chain["jobName"], f"{holder.CHAIN_PREFIX}-run")
+        normal = holder.validate_request(
+            valid_payload(mode="normal", jobName=f"{holder.NORMAL_PREFIX}-run"), POOLS
+        )
+        self.assertEqual(normal["jobName"], f"{holder.NORMAL_PREFIX}-run")
 
     def test_priority_floor_follows_node_holder_configuration(self):
         burst = valid_payload(
@@ -296,6 +308,7 @@ class HandlerTests(unittest.TestCase):
         self.assertIn("chain", payload["requestModes"])
         self.assertNotIn("tick", payload["chainActions"])
         self.assertEqual(payload["chainPrefix"], holder.CHAIN_PREFIX)
+        self.assertEqual(payload["normalPrefix"], holder.NORMAL_PREFIX)
         self.assertEqual(payload["minPriority"], holder.MIN_PRIORITY)
         self.assertEqual(payload["user"], scheduler.USERNAME)
         status, payload = self.request("GET", "/api/csrf-token")

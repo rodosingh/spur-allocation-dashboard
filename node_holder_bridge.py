@@ -18,18 +18,21 @@ NODE_HOLDER = Path(
 STATE_DIR = Path(
     os.environ.get("NODEHOLD_DIR", Path.home() / ".node_holder")
 ).expanduser()
-# node_holder derives its own prefix from NODEHOLD_NAME and falls back to
-# "interactive", so follow that rather than any one person's naming habit. A
-# user who exports NODEHOLD_NAME then sees the same chains here as on the CLI.
+# Chains take the "hold-" family by default (they hold a node); one-off jobs take
+# the "interactive-" family. Both are overridable, and the chain prefix still
+# tracks NODEHOLD_NAME so the dashboard and the shell agree on new-chain names.
 CHAIN_PREFIX = (
     os.environ.get("SPUR_DASHBOARD_CHAIN_PREFIX")
     or os.environ.get("NODEHOLD_NAME")
-    or "interactive"
+    or "hold"
 )
+NORMAL_PREFIX = os.environ.get("SPUR_DASHBOARD_NORMAL_PREFIX") or "interactive"
 # node_holder refuses pools under NODEHOLD_MIN_PRIO; read the same knob so the
 # dashboard cannot disagree with the script it drives.
 MIN_PRIORITY = int(os.environ.get("NODEHOLD_MIN_PRIO") or 10_000)
-CHAIN_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,48}$")
+# Full scheduler names carry a prefix, so allow a little more room than the base.
+CHAIN_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+BASE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,48}$")
 NODE_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 JOB_ID_RE = re.compile(r"^\d+$")
 SAFE_ACTIONS = {"topup", "arm", "clear", "tend", "untend", "release", "shrink"}
@@ -202,23 +205,28 @@ def validate_request(
     if strategy not in {"start", "adopt", "race"}:
         raise ValueError("Chain strategy must be start, adopt, or race")
 
-    job_name = str(payload.get("jobName", "")).strip()
-    if not CHAIN_NAME_RE.fullmatch(job_name):
+    raw_name = str(payload.get("jobName", "")).strip()
+    if not BASE_NAME_RE.fullmatch(raw_name):
         raise ValueError(
             "Job name must be 1-48 letters, digits, dots, underscores, or dashes"
         )
-    if mode == "normal" and (
-        job_name == CHAIN_PREFIX or job_name.startswith(f"{CHAIN_PREFIX}-")
-    ):
-        raise ValueError(
-            f"Normal job names cannot use the maintained-chain prefix '{CHAIN_PREFIX}-'"
-        )
-    if job_name == CHAIN_PREFIX:
-        tag = ""
-    elif job_name.startswith(f"{CHAIN_PREFIX}-"):
-        tag = job_name[len(CHAIN_PREFIX) + 1 :]
+    # Reduce whatever was typed to a bare base so an explicitly typed prefix is
+    # not doubled ("hold-run" stays "hold-run", not "hold-hold-run").
+    base = raw_name
+    if base.startswith(f"{CHAIN_PREFIX}-"):
+        base = base[len(CHAIN_PREFIX) + 1 :]
+    elif base.startswith(f"{NORMAL_PREFIX}-"):
+        base = base[len(NORMAL_PREFIX) + 1 :]
+    elif base in {CHAIN_PREFIX, NORMAL_PREFIX}:
+        base = ""
+    if mode == "normal":
+        if not base:
+            raise ValueError("Enter a job name")
+        tag = base
+        job_name = f"{NORMAL_PREFIX}-{base}"
     else:
-        tag = job_name
+        tag = base
+        job_name = CHAIN_PREFIX if not base else f"{CHAIN_PREFIX}-{base}"
 
     pools_payload = pools_payload or get_pools()
     account = str(payload.get("account", "")).strip()

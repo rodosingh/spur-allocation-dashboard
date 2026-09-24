@@ -155,13 +155,18 @@ function selectedPool() {
   return state.pools?.pools?.find((pool) => pool.account === account && pool.qos === qos) || null;
 }
 
+function updatePrefixHint() {
+  const capabilities = state.capabilities;
+  if (!capabilities) return;
+  const prefix =
+    selectedMode() === "chain" ? capabilities.chainPrefix : capabilities.normalPrefix;
+  setText("#prefix-hint", `Submitted to the scheduler as ${prefix}-<name>.`);
+}
+
 function renderCapabilities() {
   const capabilities = state.capabilities;
   if (!capabilities) return;
-  setText(
-    "#prefix-hint",
-    `Chain jobs are named ${capabilities.chainPrefix}-<name>.`,
-  );
+  updatePrefixHint();
   setText(
     "#priority-floor-hint",
     `Override node_holder’s priority floor if this QoS is below ${capabilities.minPriority}`,
@@ -231,6 +236,7 @@ function updateRequestMode() {
     !chain || $("#strategy").value !== "adopt",
   );
   $("#submit-button").firstChild.textContent = chain ? "Submit chain " : "Submit normal job ";
+  updatePrefixHint();
   updateRequestPreview();
 }
 
