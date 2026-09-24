@@ -2250,11 +2250,38 @@ ensure_race() {
         "$(my_preempt_mode)" "$(time_to_seconds "$TIME_LIMIT")" > "$race" || die "cannot write $race"
 }
 
+# Some login nodes deny the user crontab entirely (crontab.deny). That is a
+# permanent, expected condition on parts of this fleet, not a transient error.
+# cron_available answers it (memoized per process) and is checked directly at
+# every place that would read or write the crontab, so a chain can still be
+# submitted and released on such a node -- it just is not tended from there.
+# A global flag set inside read_cron would not do: read_cron is called as
+# $(read_cron), a subshell, so anything it assigns is lost to the caller.
+CRON_OK=""
+cron_available() {
+    if [ -z "$CRON_OK" ]; then
+        local err
+        err=$(crontab -l 2>&1 >/dev/null)
+        if [ -z "$err" ] || printf '%s' "$err" | grep -qi 'no crontab for'; then
+            CRON_OK=1
+        else
+            CRON_OK=0
+        fi
+    fi
+    [ "$CRON_OK" = 1 ]
+}
+
 read_cron() {
     local err out rc
     err=$(mktemp) || return 1
     out=$(crontab -l 2> "$err"); rc=$?
     if [ "$rc" != 0 ] && ! grep -qi 'no crontab for' "$err"; then
+        # A node that denies crontab is handled by cron_available at every write
+        # site; return empty (not failure) so the start guard does not abort and
+        # tended_by_cron does not echo the scheduler's refusal on every tick.
+        if grep -qiE 'not allowed to use this program|not permitted to use|are not allowed' "$err"; then
+            rm -f "$err"; return 0
+        fi
         cat "$err" >&2; rm -f "$err"; return 1
     fi
     rm -f "$err"
@@ -2283,6 +2310,12 @@ tick_line() {
 
 tend_now() {
     local current
+    if ! cron_available; then
+        say "note: crontab is disabled for you on $(hostname -s), so '${JOB_NAME}' is not tended from here."
+        say "      its holder and queued successors still run, but it will not auto-renew until you tend"
+        say "      it from a login node that allows crontab: ${SELF} -n $(tag_arg "$JOB_NAME") tend"
+        return 0
+    fi
     mkdir -p "$LOG_DIR" || die "cannot create log directory"
     current=$(read_cron) || die "cannot read crontab; no changes made"
     if printf '%s\n' "$current" | awk -v n="NODEHOLD_NAME=$JOB_NAME " \
@@ -2291,6 +2324,7 @@ tend_now() {
 }
 
 untend_now() {
+    cron_available || return 0
     local current
     current=$(read_cron) || die "cannot read crontab; no changes made"
     printf '%s\n' "$current" | awk -v n="NODEHOLD_NAME=$JOB_NAME " 'index($0,n)==0 && NF' | crontab - || die "cannot update cron"
@@ -2301,12 +2335,14 @@ cmd_tend() {
     [ -f "$PROFILE" ] || die "no saved chain; start or adopt it first"
     ensure_race
     tend_now
-    say "cron tends ${JOB_NAME} every five minutes on $(hostname -s)"
+    cron_available && say "cron tends ${JOB_NAME} every five minutes on $(hostname -s)"
 }
 
 cmd_untend() {
     resolve_chain
-    if untend_now; then
+    if ! cron_available; then
+        say "crontab is disabled for you on $(hostname -s) -- nothing to untend here"
+    elif untend_now; then
         say "cron no longer tends '$(tag_of "$JOB_NAME")' -- its jobs are untouched"
     else
         say "cron was not tending '$(tag_of "$JOB_NAME")'"

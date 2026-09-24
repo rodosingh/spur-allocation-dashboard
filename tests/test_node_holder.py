@@ -8,6 +8,8 @@ def save(): f.write_text(json.dumps(jobs))
 if name=='getent': print('tester:x:1000:1000::'+str(p)+':/bin/bash')
 elif name=='id': print('1000' if '-u' in a and '-un' not in a else 'tester')
 elif name=='crontab':
+ if (p/'cron_disabled').exists():
+  print('You (tester) are not allowed to use this program (crontab)',file=sys.stderr);sys.exit(1)
  c=p/'cron'
  if a==['-l']:
   if not c.exists(): print('no crontab for tester',file=sys.stderr);sys.exit(1)
@@ -245,6 +247,16 @@ class TestCLI(unittest.TestCase):
   env=dict(self.env,NODEHOLD_NAME='hold-a',NODEHOLD_CHAIN_FULL_NAME='hold-a')
   self.runcli('release',env=env)
   self.assertEqual({job['name'] for job in self.jobs()},{'hold-a-b'})
+ def test_disabled_crontab_still_submits_and_releases(self):
+  # A login node that denies crontab must not block submission or release:
+  # the chain runs without local tending instead of aborting.
+  (self.p/'cron_disabled').touch()
+  env=dict(self.env,NODEHOLD_ARM='0')
+  r=self.runcli('-n','work','-q','high-qos','start',env=env)
+  self.assertEqual(len(self.jobs()),1)
+  self.assertIn('not tended from here',r.stdout)
+  self.runcli('-n','work','release',env=env)
+  self.assertEqual(self.jobs(),[])
  def test_pools_json_is_structured_and_keeps_duplicate_associations(self):
   (self.p/'duplicate_qos').touch()
   payload=json.loads(self.runcli('pools-json').stdout)
