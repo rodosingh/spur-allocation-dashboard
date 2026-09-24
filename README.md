@@ -13,6 +13,62 @@ The web app is deliberately a thin control plane:
 - Scheduler policy, account/QoS associations, limits, occupancy, and job state
   are read live. They are not hardcoded in the UI.
 
+## Setup
+
+### Requirements
+
+- A SPUR login host with `squeue`, `sbatch`, `scancel`, and `spur` on `PATH`.
+- Python 3.8 or newer (the cluster ships 3.12). No `pip install` step — the app
+  uses only the Python standard library.
+- Node.js is optional, and only to run the JavaScript tests.
+
+### Get the code
+
+Clone it anywhere you like; it is self-contained (the compatible `node_holder.sh`
+and its tests are bundled), so it does not depend on any sibling directory:
+
+```bash
+git clone git@github.com:rodosingh/spur-allocation-dashboard.git ~/spur-allocation-dashboard
+cd ~/spur-allocation-dashboard
+chmod +x node_holder.sh          # normally preserved by git; harmless to re-run
+python3 app.py
+```
+
+Use `https://github.com/rodosingh/spur-allocation-dashboard.git` instead if you
+have not set up an SSH key. The repository is private, so you need access to it.
+
+### Can it live directly in `$HOME`?
+
+Yes. The code's location is irrelevant to how it runs: request history always
+goes to `~/.spur-dashboard`, chain state to `~/.node_holder`, and logs are read
+from `~/logs`, no matter where `app.py` sits. A subdirectory such as
+`~/spur-allocation-dashboard` is the clean choice. You *can* drop the files
+loose into `$HOME`, but that clutters your home directory and risks name
+collisions (`app.py`, `scheduler.py`, `node_holder.sh`), so it is not advised.
+
+### If you already run `node_holder.sh` elsewhere
+
+The dashboard defaults to its **bundled** `node_holder.sh`. If you already keep a
+canonical copy (for example `~/SCRIPTS/node_holder.sh`) whose chains are tended
+by cron, point the dashboard at that same file so state, cron entries, and the
+frozen per-chain runner all stay consistent:
+
+```bash
+SPUR_DASHBOARD_NODE_HOLDER=~/SCRIPTS/node_holder.sh python3 app.py
+```
+
+Otherwise a chain started from the dashboard installs cron lines referencing the
+bundled copy, while one started from your other copy references that one — both
+work, but they are easier to reason about pointing at a single script.
+
+### Verify (optional)
+
+```bash
+bash -n node_holder.sh
+python3 -m unittest tests.test_node_holder
+python3 -m unittest test_app.py
+```
+
 ## Run
 
 Run on a SPUR login host, from this directory:
