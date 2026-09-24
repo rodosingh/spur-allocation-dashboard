@@ -388,7 +388,7 @@ def run_chain_action(name: str, action: str, value: object = None) -> dict[str, 
     output = scheduler.run_command(
         command,
         timeout=180,
-        env=_environment(prefix=name),
+        env=_environment(prefix=name, NODEHOLD_CHAIN_FULL_NAME=name),
     )
     return {"chainName": name, "action": action, "output": output}
 

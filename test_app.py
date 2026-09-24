@@ -142,6 +142,10 @@ class BridgeValidationTests(unittest.TestCase):
         holder.run_chain_action("hold-demo", "release")
         self.assertEqual(run.call_args.args[0][-1], "release")
         self.assertEqual(run.call_args.kwargs["env"]["NODEHOLD_NAME"], "hold-demo")
+        self.assertEqual(
+            run.call_args.kwargs["env"]["NODEHOLD_CHAIN_FULL_NAME"],
+            "hold-demo",
+        )
         with self.assertRaisesRegex(ValueError, "Unsupported"):
             holder.run_chain_action("hold-demo", "tick")
 

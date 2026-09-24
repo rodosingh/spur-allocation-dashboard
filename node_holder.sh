@@ -605,6 +605,14 @@ known_chains() {
 
 # An explicit -n wins; otherwise the only chain there is, otherwise the default.
 resolve_chain() {
+    # Dashboard integrations sometimes know the full scheduler name but not the
+    # prefix/tag split used when the chain was created. An exact name also avoids
+    # the ambiguity between nested names such as hold-a and hold-a-b.
+    if [ -n "${NODEHOLD_CHAIN_FULL_NAME:-}" ]; then
+        use_chain "$NODEHOLD_CHAIN_FULL_NAME"
+        load_profile
+        return 0
+    fi
     [ -n "$TAG" ] && { use_tag "$TAG"; load_profile; return 0; }
 
     local names count

@@ -239,6 +239,12 @@ class TestCLI(unittest.TestCase):
  def test_pool_totals_not_duplicated(self):
   self.start('-q','high-qos');(self.p/'duplicate_qos').touch()
   r=self.runcli('pools');self.assertIn('0 running job(s), 1 queued',r.stdout)
+ def test_exact_full_name_disambiguates_nested_chain_names(self):
+  self.runcli('-n','a','-q','high-qos','start')
+  self.runcli('-n','a-b','-q','high-qos','start')
+  env=dict(self.env,NODEHOLD_NAME='hold-a',NODEHOLD_CHAIN_FULL_NAME='hold-a')
+  self.runcli('release',env=env)
+  self.assertEqual({job['name'] for job in self.jobs()},{'hold-a-b'})
  def test_pools_json_is_structured_and_keeps_duplicate_associations(self):
   (self.p/'duplicate_qos').touch()
   payload=json.loads(self.runcli('pools-json').stdout)
