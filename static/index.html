@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="__CSRF_TOKEN__">
+    <title>SPUR Control</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <div>
+            <p class="eyebrow">AMD SPUR</p>
+            <h1>Allocation control</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <div class="health-pill">
+            <span id="health-dot" class="health-dot loading" aria-hidden="true"></span>
+            <span>
+              <strong id="health-label">Connecting</strong>
+              <small id="updated-at">Waiting for scheduler</small>
+            </span>
+          </div>
+          <button id="refresh-button" class="button ghost" type="button">
+            <span aria-hidden="true">↻</span> Refresh
+          </button>
+        </div>
+      </header>
+
+      <section class="metrics" aria-label="Allocation summary">
+        <article class="metric-card">
+          <span class="metric-icon running" aria-hidden="true">◆</span>
+          <div><small>Running jobs</small><strong id="running-jobs">—</strong></div>
+          <p id="running-detail">Across — nodes</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-icon pending" aria-hidden="true">◷</span>
+          <div><small>Pending jobs</small><strong id="pending-jobs">—</strong></div>
+          <p>Waiting or chained</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-icon chains" aria-hidden="true">⛓</span>
+          <div><small>Maintained chains</small><strong id="chain-count">—</strong></div>
+          <p>Renewed by node_holder</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-icon pools" aria-hidden="true">▦</span>
+          <div><small>Available pools</small><strong id="pool-count">—</strong></div>
+          <p id="best-pool">Loading policy</p>
+        </article>
+      </section>
+
+      <section class="control-grid">
+        <article class="panel request-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">REQUEST</p>
+              <h2>Start an allocation</h2>
+            </div>
+            <span class="panel-number">01</span>
+          </div>
+
+          <form id="request-form">
+            <fieldset class="segmented-field">
+              <legend>Session type</legend>
+              <div class="segmented">
+                <label>
+                  <input type="radio" name="mode" value="chain" checked>
+                  <span>Chain <small>auto-renewed</small></span>
+                </label>
+                <label>
+                  <input type="radio" name="mode" value="normal">
+                  <span>Normal <small>one job</small></span>
+                </label>
+              </div>
+            </fieldset>
+
+            <div class="form-grid">
+              <label class="field span-2">
+                <span>Job name</span>
+                <input id="job-name" name="jobName" required maxlength="48"
+                       pattern="[A-Za-z0-9_.-]+" placeholder="training-run">
+                <small id="prefix-hint">Chain jobs receive the configured prefix.</small>
+              </label>
+              <label class="field">
+                <span>Time per job</span>
+                <input id="time-limit" name="timeLimit" value="24:00:00"
+                       inputmode="numeric" placeholder="HH:MM:SS">
+              </label>
+              <label class="field">
+                <span>GPUs per node</span>
+                <select id="gpus" name="gpus">
+                  <option>8</option><option>7</option><option>6</option><option>5</option>
+                  <option>4</option><option>3</option><option>2</option><option>1</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>CPUs</span>
+                <input id="cpus" name="cpus" inputmode="numeric" placeholder="Auto">
+                <small>Auto follows the GPU share.</small>
+              </label>
+              <label class="field">
+                <span>Nodes</span>
+                <input id="nodes" name="nodes" type="number" min="1" max="32" value="1">
+              </label>
+              <label class="field">
+                <span>Account</span>
+                <select id="account" name="account" required>
+                  <option value="">Loading…</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>QoS</span>
+                <select id="qos" name="qos" required>
+                  <option value="">Choose account first</option>
+                </select>
+                <small id="pool-policy">Account and QoS are validated together.</small>
+              </label>
+              <label class="field span-2">
+                <span>Exact node <em>optional</em></span>
+                <input id="node" name="node" placeholder="Blank = scheduler chooses">
+              </label>
+            </div>
+
+            <div class="inline-options">
+              <label class="check">
+                <input id="exclusive" name="exclusive" type="checkbox" checked>
+                <span>Exclusive node</span>
+              </label>
+            </div>
+
+            <details id="advanced-options" class="advanced">
+              <summary>Chain and safety options <span>Advanced</span></summary>
+              <div class="form-grid advanced-grid">
+                <label class="field chain-only">
+                  <span>Strategy</span>
+                  <select id="strategy" name="strategy">
+                    <option value="start">Start new chain</option>
+                    <option value="adopt">Adopt running job</option>
+                    <option value="race">Race eligible pools</option>
+                  </select>
+                </label>
+                <label id="adopt-field" class="field chain-only hidden">
+                  <span>Running job ID</span>
+                  <input id="adopt-job-id" name="adoptJobId" inputmode="numeric">
+                </label>
+                <label class="field chain-only">
+                  <span>Queued successors</span>
+                  <input id="chain-depth" name="chainDepth" type="number" min="0" max="64" value="7">
+                </label>
+                <label class="field chain-only">
+                  <span>Runway hours <em>alternative</em></span>
+                  <input id="runway-hours" name="runwayHours" type="number" min="0" value="0">
+                </label>
+                <label class="field chain-only">
+                  <span>Expire after hours</span>
+                  <input id="expiry-hours" name="expiryHours" type="number" min="0" value="0">
+                </label>
+                <div class="option-stack span-2 chain-only">
+                  <label class="check">
+                    <input id="repin" name="repin" type="checkbox" checked>
+                    <span>Recover a lost explicit pin on another idle node</span>
+                  </label>
+                </div>
+                <div class="option-stack span-2">
+                  <label class="check warning-check">
+                    <input id="accept-preemption" name="acceptPreemption" type="checkbox">
+                    <span>I accept that this QoS may cancel a running job when preempted</span>
+                  </label>
+                  <label class="check warning-check">
+                    <input id="any-qos" name="anyQos" type="checkbox">
+                    <span id="priority-floor-hint">Override node_holder’s priority floor for low-priority pools</span>
+                  </label>
+                </div>
+              </div>
+            </details>
+
+            <div id="request-preview" class="request-preview" aria-live="polite">
+              Choose a pool to preview this request.
+            </div>
+            <button id="submit-button" class="button primary submit-button" type="submit">
+              Submit request <span aria-hidden="true">→</span>
+            </button>
+          </form>
+        </article>
+
+        <article class="panel end-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">END SESSION</p>
+              <h2>Release cleanly</h2>
+            </div>
+            <span class="panel-number">02</span>
+          </div>
+          <p class="panel-copy">
+            Chains are released through <code>node_holder</code>; normal jobs are
+            cancelled directly. The dashboard will not confuse the two.
+          </p>
+          <label class="field">
+            <span>Active session</span>
+            <select id="end-target">
+              <option value="">No active sessions</option>
+            </select>
+          </label>
+          <div id="end-impact" class="impact-card empty-impact">
+            Select a running or pending session to see exactly what will end.
+          </div>
+          <button id="end-button" class="button danger wide" type="button" disabled>
+            End selected session
+          </button>
+
+          <div class="safety-note">
+            <strong>Container reminder</strong>
+            <p>Host Docker containers outlive Slurm jobs. Stop GPU containers before releasing a node.</p>
+          </div>
+        </article>
+      </section>
+
+      <nav class="tabs" aria-label="Dashboard views">
+        <button class="tab active" data-tab="status" type="button">Status</button>
+        <button class="tab" data-tab="pools" type="button">Pools</button>
+        <button class="tab" data-tab="sq" type="button">SQ <small>mine</small></button>
+        <button class="tab" data-tab="sqa" type="button">SQA <small>all</small></button>
+        <button class="tab" data-tab="history" type="button">Past requests</button>
+        <button class="tab" data-tab="diagnostics" type="button">Diagnostics</button>
+      </nav>
+
+      <section id="tab-status" class="tab-panel active" data-panel="status">
+        <div class="section-heading">
+          <div><p class="eyebrow">LIVE</p><h2>Chains and jobs</h2></div>
+          <p>Maintained chains first, then every job in your queue.</p>
+        </div>
+        <div id="chain-cards" class="chain-cards">
+          <div class="skeleton-card"></div>
+        </div>
+        <div class="table-card">
+          <div class="table-title"><h3>Your scheduler queue</h3><span id="mine-count">—</span></div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr>
+                <th>Job</th><th>Account / QoS</th><th>Priority</th><th>State</th>
+                <th>Resources</th><th>Time</th><th>Node / reason</th><th>Action</th>
+              </tr></thead>
+              <tbody id="status-jobs"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-pools" class="tab-panel" data-panel="pools">
+        <div class="section-heading">
+          <div><p class="eyebrow">CAPACITY</p><h2>Pool policy and occupancy</h2></div>
+          <p>Click a row to see every running or waiting job in that QoS.</p>
+        </div>
+        <div class="table-card">
+          <div class="table-scroll">
+            <table>
+              <thead><tr>
+                <th>Account</th><th>QoS</th><th>Priority</th><th>Preemption</th>
+                <th>Usage</th><th>Queued</th><th>Yours</th><th>Limits</th>
+              </tr></thead>
+              <tbody id="pool-rows"><tr><td colspan="8" class="empty">Loading pools…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-sq" class="tab-panel" data-panel="sq">
+        <div class="section-heading">
+          <div><p class="eyebrow">SQ</p><h2>Your queue</h2></div>
+          <p>The UI equivalent of <code>sq</code> from your bash aliases.</p>
+        </div>
+        <div id="sq-table" class="queue-host"></div>
+      </section>
+
+      <section id="tab-sqa" class="tab-panel" data-panel="sqa">
+        <div class="section-heading">
+          <div><p class="eyebrow">SQA</p><h2>Cluster queue</h2></div>
+          <p>All users. This view refreshes only when opened or manually requested.</p>
+        </div>
+        <div class="filters">
+          <input id="sqa-search" type="search" placeholder="Filter user, job, account, QoS, node…">
+          <select id="sqa-state"><option value="">All states</option><option>RUNNING</option><option>PENDING</option></select>
+          <button id="sqa-refresh" class="button ghost" type="button">Refresh all jobs</button>
+        </div>
+        <div id="sqa-table" class="queue-host"></div>
+      </section>
+
+      <section id="tab-history" class="tab-panel" data-panel="history">
+        <div class="section-heading">
+          <div><p class="eyebrow">AUDIT</p><h2>Past requests</h2></div>
+          <p>Dashboard provenance alongside terminal scheduler history.</p>
+        </div>
+        <div id="request-history" class="history-grid"></div>
+        <div class="table-card">
+          <div class="table-title"><h3>Terminal jobs — last 7 days</h3></div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr>
+                <th>Job</th><th>Account / QoS</th><th>State</th><th>Runtime</th>
+                <th>Started</th><th>Ended</th><th>Exit</th>
+              </tr></thead>
+              <tbody id="history-jobs"><tr><td colspan="7" class="empty">Open this tab to load history.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-diagnostics" class="tab-panel" data-panel="diagnostics">
+        <div class="section-heading">
+          <div><p class="eyebrow">DOCTOR</p><h2>Scheduler and maintenance health</h2></div>
+          <button id="diagnostics-refresh" class="button ghost" type="button">Run doctor</button>
+        </div>
+        <div id="diagnostic-cards" class="diagnostic-grid">
+          <div class="skeleton-card"></div>
+        </div>
+        <div class="log-console">
+          <div class="log-toolbar">
+            <h3>Chain logs</h3>
+            <select id="log-chain"><option value="">Select a chain</option></select>
+            <select id="log-kind"><option value="tick">Tick</option><option value="arm">Arm</option><option value="on-start">On start</option></select>
+            <button id="log-load" class="button ghost compact" type="button">Load</button>
+          </div>
+          <pre id="log-output">No log selected.</pre>
+        </div>
+      </section>
+    </main>
+
+    <div id="message" role="status" aria-live="polite"></div>
+
+    <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+      <form method="dialog" class="dialog-content">
+        <p class="eyebrow" id="confirm-eyebrow">CONFIRM</p>
+        <h2 id="confirm-title">Confirm action</h2>
+        <div id="confirm-copy" class="dialog-copy"></div>
+        <label id="confirm-type-wrap" class="field hidden">
+          <span>Type the requested value to continue</span>
+          <input id="confirm-type" autocomplete="off">
+        </label>
+        <div class="dialog-actions">
+          <button id="confirm-cancel" class="button ghost" value="cancel" type="submit">Keep session</button>
+          <button id="confirm-accept" class="button danger" value="default" type="button">Confirm</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
