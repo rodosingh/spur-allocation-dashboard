@@ -257,6 +257,12 @@ class TestCLI(unittest.TestCase):
   self.assertIn('not tended from here',r.stdout)
   self.runcli('-n','work','release',env=env)
   self.assertEqual(self.jobs(),[])
+ def test_release_refuses_a_name_that_is_not_a_chain(self):
+  # A full chain name passed to -n is re-prefixed (hold + hold-work), so it
+  # names a phantom. Releasing it must fail loudly, not tombstone a non-chain.
+  r=self.runcli('-n','hold-work','release',ok=False)
+  self.assertIn('no chain named',r.stdout+r.stderr)
+  self.assertFalse(list((self.p/'state').glob('*.released')))
  def test_pools_json_is_structured_and_keeps_duplicate_associations(self):
   (self.p/'duplicate_qos').touch()
   payload=json.loads(self.runcli('pools-json').stdout)

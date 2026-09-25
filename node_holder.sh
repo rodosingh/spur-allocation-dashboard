@@ -2225,6 +2225,7 @@ cmd_doctor_json() {
 
 cmd_stop() {
     resolve_chain
+    chain_exists || die "no chain named '${JOB_NAME}' -- nothing to stop; list chains with: ${SELF} status"
     cancel_chain || die "cancellation incomplete; state preserved"
     say "jobs cancelled for ${JOB_NAME}; use release to disable maintenance as well"
 }
@@ -2378,8 +2379,27 @@ cmd_start_many() {
     [ "$got" -eq "$WANT_NODES" ]
 }
 
+# A name is a real chain only if it has jobs, a saved profile, or race
+# membership. Anything else is almost always a mistake -- most often a full
+# chain name passed to -n, which is then re-prefixed into a phantom -- so the
+# stop/release paths refuse it instead of silently tombstoning a name that never
+# existed and reporting success, which reads as "the cancel did nothing".
+chain_exists() {
+    [ -n "$(chain_rows)" ] && return 0
+    [ -f "$PROFILE" ] && return 0
+    local race
+    for race in "$STATE_DIR"/*.race; do
+        [ -f "$race" ] || continue
+        awk -F'|' -v n="$JOB_NAME" '$1==n {found=1} END {exit !found}' "$race" && return 0
+    done
+    return 1
+}
+
 cmd_release() {
     resolve_chain
+    chain_exists || die "no chain named '${JOB_NAME}' -- nothing to release. A full chain
+             name passed to -n is re-prefixed into a name like this; list the real
+             ones and release by tag with: ${SELF} status"
     local race tmp gone=${STATE_DIR}/superseded ts
     ts=$(date +%Y%m%d-%H%M%S)
     # Persistent shared tombstone blocks every new submission, even from a
