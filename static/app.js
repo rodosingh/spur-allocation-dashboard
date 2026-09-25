@@ -613,6 +613,25 @@ async function releaseChain(chain) {
   await endSelected();
 }
 
+async function cancelSingleJob(job) {
+  const confirmed = await confirmAction({
+    title: `Cancel job ${job.id}?`,
+    copy:
+      job.kind === "chain"
+        ? `Cancels only job ${job.id} (${job.name}) with scancel. It belongs to a maintained chain, so the chain may submit a replacement — use Release to stop the whole chain.`
+        : `Cancels job ${job.id} (${job.name}) with scancel.`,
+    acceptLabel: "Cancel job",
+  });
+  if (!confirmed) return;
+  try {
+    await postJson("/api/jobs/cancel", { jobId: job.id });
+    showMessage(`Job ${job.id} cancelled.`);
+    await refreshCore();
+  } catch (error) {
+    showMessage(error.message, true);
+  }
+}
+
 function jobRow(job, { allowActions = true } = {}) {
   const row = element("tr", job.isMine ? "mine" : "");
   row.append(
@@ -636,24 +655,17 @@ function jobRow(job, { allowActions = true } = {}) {
     }
     if (job.kind === "normal") {
       actions.append(
-        actionButton("Cancel", () => {
-          $("#end-target").value = `job:${job.id}`;
-          updateEndImpact();
-          void endSelected();
-        }, "danger"),
+        actionButton("Cancel job", () => cancelSingleJob(job), "danger"),
       );
     } else {
-      const chain = state.status?.chains?.find((item) => item.name === job.name);
-      if (chain) {
-        actions.append(
-          actionButton(
-            "Release chain",
-            () => releaseChain(chain),
-            "danger",
-            CHAIN_ACTION_HELP.release,
-          ),
-        );
-      }
+      actions.append(
+        actionButton(
+          "Cancel job",
+          () => cancelSingleJob(job),
+          "danger",
+          "Cancel only this job with scancel; the chain may replace it. Use Release to stop the whole chain.",
+        ),
+      );
     }
     row.append(cell(actions));
   }

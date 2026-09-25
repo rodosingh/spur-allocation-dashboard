@@ -189,5 +189,6 @@ test("source keeps destructive chain and normal endpoints separate", () => {
   assert.match(source, /postJson\("\/api\/chains\/action"/);
   assert.match(source, /action: "release"/);
   assert.match(source, /postJson\("\/api\/jobs\/cancel"/);
+  assert.match(source, /async function cancelSingleJob\(job\)/);
   assert.doesNotMatch(source, /action: "tick"/);
 });

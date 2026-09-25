@@ -242,10 +242,18 @@ class SchedulerTests(unittest.TestCase):
 
     @patch.object(scheduler, "run_command")
     @patch.object(scheduler, "get_queue")
-    def test_chain_job_cannot_be_cancelled_as_normal(self, queue, run):
+    def test_any_owned_job_can_be_cancelled_including_chain_members(self, queue, run):
         queue.return_value = [{"id": "123", "name": "hold-demo"}]
-        with self.assertRaisesRegex(PermissionError, "maintained chain"):
-            scheduler.cancel_owned_job("123", {"hold-demo"})
+        result = scheduler.cancel_job("123")
+        self.assertEqual(run.call_args.args[0], ["scancel", "123"])
+        self.assertEqual(result["jobId"], "123")
+        self.assertEqual(result["name"], "hold-demo")
+
+    @patch.object(scheduler, "run_command")
+    @patch.object(scheduler, "get_queue", return_value=[])
+    def test_cancel_rejects_a_job_you_do_not_own(self, queue, run):
+        with self.assertRaises(FileNotFoundError):
+            scheduler.cancel_job("999")
         run.assert_not_called()
 
 

@@ -163,15 +163,13 @@ def create_request(payload: dict[str, Any]) -> dict[str, Any]:
         MUTATION_LOCK.release()
 
 
-def cancel_normal_job(job_id: str) -> dict[str, Any]:
+def cancel_one_job(job_id: str) -> dict[str, Any]:
     if not MUTATION_LOCK.acquire(blocking=False):
         raise FileExistsError("Another dashboard operation is already in progress")
     try:
-        status = holder.get_status()
-        scheduler.cancel_owned_job(job_id, holder.chain_names(status))
-        result = {"jobId": job_id, "state": "CANCELLED"}
+        result = scheduler.cancel_job(job_id)
         STORE.record_event(
-            {"type": "normal-cancel", "target": job_id, "result": result}
+            {"type": "job-cancel", "target": job_id, "result": result}
         )
         return result
     finally:
@@ -302,7 +300,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         routes: dict[str, tuple[Callable[[dict[str, Any]], dict[str, Any]], int]] = {
             "/api/requests": (create_request, HTTPStatus.CREATED),
             "/api/jobs/cancel": (
-                lambda payload: cancel_normal_job(str(payload.get("jobId", ""))),
+                lambda payload: cancel_one_job(str(payload.get("jobId", ""))),
                 HTTPStatus.OK,
             ),
             "/api/chains/action": (run_chain_action, HTTPStatus.OK),

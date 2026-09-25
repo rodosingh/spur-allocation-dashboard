@@ -246,14 +246,12 @@ def submit_normal(request: dict[str, Any]) -> str:
     return job_id
 
 
-def cancel_owned_job(job_id: str, chain_job_names: set[str]) -> None:
+def cancel_job(job_id: str) -> dict[str, Any]:
+    """Cancel one of the current user's jobs by ID (chain member or not)."""
     if not re.fullmatch(r"\d+", job_id):
         raise ValueError("Invalid job ID")
     job = next((item for item in get_queue("mine") if item["id"] == job_id), None)
     if not job:
         raise FileNotFoundError("Active job not found")
-    if job["name"] in chain_job_names:
-        raise PermissionError(
-            "This job belongs to a maintained chain; release the chain instead"
-        )
     run_command(["scancel", job_id], timeout=60)
+    return {"jobId": job_id, "name": job["name"], "state": "CANCELLED"}
