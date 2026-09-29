@@ -23,6 +23,8 @@ elif name=='spur':
   print(capacities.get(a[2], 'NodeName='+a[2]+' State=IDLE CPUTot=236 CPUAlloc=0'))
  elif 'qos' in a:
   if (p/'qos_fail').exists(): sys.exit(1)
+  cf=p/'qos_calls'; n=int(cf.read_text()) if cf.exists() else 0; cf.write_text(str(n+1))
+  if (p/'qos_fail_once').exists() and n==0: sys.exit(1)
   print(f'{"Name":<30} {"Priority":<10} {"PreemptMode":<14} MaxWall')
   for q,pr in [('high-qos',100 if (p/'downgrade').exists() else 10000),('low-qos',100),('other-qos',10000)]: print(f'{q:<30} {pr:<10} {"off":<14} 1440')
  else:
@@ -115,8 +117,15 @@ class TestCLI(unittest.TestCase):
   self.assertTrue((self.p/'state/hold.race').exists());self.assertIn('NODEHOLD_NAME=hold ',(self.p/'cron').read_text())
  def test_unknown_policy_refused(self):
   (self.p/'qos_fail').touch()
-  self.runcli('-n','work','-q','high-qos','start',ok=False)
+  r=self.runcli('-n','work','-q','high-qos','start',ok=False)
+  self.assertIn('could not read the QoS policy table',r.stdout+r.stderr)
   self.assertEqual(self.jobs(),[])
+ def test_qos_table_read_retries_a_transient_failure(self):
+  # A single empty read (controller hiccup) must not refuse a good submission:
+  # qos_facts retries, so the start goes through.
+  (self.p/'qos_fail_once').touch()
+  self.start('-q','high-qos')
+  self.assertEqual(len(self.jobs()),1)
  def test_topup_rechecks_policy(self):
   self.start('-q','high-qos');j=self.jobs();j[0].update(state='RUNNING',node='node026');(self.p/'jobs.json').write_text(json.dumps(j))
   (self.p/'downgrade').touch()

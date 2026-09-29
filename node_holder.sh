@@ -768,7 +768,14 @@ topup() {
 # their headings, so each value is matched to its nearest heading instead of a
 # fixed offset -- blank cells would otherwise shift everything left.
 qos_facts() {
-    spur accounts show qos 2>/dev/null | awk '
+    local i out
+    # A transient controller hiccup returns an empty table, which downstream
+    # reads as "this QoS has no priority" and refuses a perfectly good
+    # submission (that is how a colleague hit "cannot verify priority for
+    # amd-hyperloom-geak-qos"). One quick retry turns that spurious refusal into
+    # a normal start; a genuinely empty table stays empty for the callers to name.
+    for i in 1 2; do
+        out=$(spur accounts show qos 2>/dev/null | awk '
         NR == 1 {
             s = $0
             for (i = 1; i <= NF; i++) {
@@ -804,7 +811,11 @@ qos_facts() {
             printf "%s|%s|%s|%s|%s|%s|%s|%s\n", v["Name"], v["Priority"], v["PreemptMode"],
                    v["MaxWall"], v["MaxJobsPU"], v["MaxSubmitPU"], cap, cappu
         }
-        function nodes(t) { return match(t, /node=[0-9]+/) ? substr(t, RSTART + 5, RLENGTH - 5) : "" }'
+        function nodes(t) { return match(t, /node=[0-9]+/) ? substr(t, RSTART + 5, RLENGTH - 5) : "" }')
+        [ -n "$out" ] && break
+        [ "$i" = 2 ] || sleep 1
+    done
+    printf '%s\n' "$out"
 }
 
 # "account|qos|default" per association. The QOS is the association default,
@@ -950,12 +961,14 @@ preempt_safe() { case ${1:-} in off|requeue) return 0 ;; *) return 1 ;; esac; }
 # not authorization to submit into an unknown pool.
 require_hi_prio() {
     [ "$ANY_QOS" = 1 ] && return 0
-    local f prio min=${NODEHOLD_MIN_PRIO:-10000}
+    local f prio facts min=${NODEHOLD_MIN_PRIO:-10000}
     case $min in ''|*[!0-9]*) die "NODEHOLD_MIN_PRIO must be an integer" ;; esac
     NODEHOLD_QOS=${NODEHOLD_QOS:-$(qos_of_account "$ACCOUNT")}
-    f=$(pick "$NODEHOLD_QOS" "$(qos_facts_cached)")
+    facts=$(qos_facts_cached)
+    [ -n "$facts" ] || die "could not read the QoS policy table from the scheduler -- it may be busy. Nothing was submitted; try again in a moment"
+    f=$(pick "$NODEHOLD_QOS" "$facts")
     prio=$(fld 2 "$f")
-    case $prio in ''|*[!0-9]*) die "cannot verify priority for ${NODEHOLD_QOS:-the default QoS}; refusing submission" ;; esac
+    case $prio in ''|*[!0-9]*) die "cannot verify priority for ${NODEHOLD_QOS:-the default QoS}; refusing submission -- retry, or pass --any-qos if you know it is high-priority" ;; esac
     [ "$prio" -ge "$min" ] || die "${NODEHOLD_QOS} priority ${prio} is below required ${min}; use --any-qos only for an intentional exception"
 }
 
