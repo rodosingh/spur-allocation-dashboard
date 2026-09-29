@@ -804,9 +804,14 @@ qos_facts() {
             # dropped in PreemptMode standing. That reads as a preemptible pool --
             # preempt_safe, pool_score and race_scan all trust this field -- so a
             # pool that is in fact off scored as one that can lose you the node.
+            # Some spur builds print full headers (Priority, PreemptMode) and
+            # others abbreviate them (Prio, Preempt); accept either so the same
+            # script reads the priority on every login node. A copy that only
+            # knew "Priority" saw nothing under a "Prio" header and refused with
+            # "cannot verify priority for <qos>".
             v["Name"] = $1
-            if (head[2] == "Priority" && $2 ~ /^[0-9]+$/) v["Priority"] = $2
-            if (head[3] == "PreemptMode" && $3 ~ /^[a-z]+$/) v["PreemptMode"] = $3
+            if ((head[2] == "Priority" || head[2] == "Prio") && $2 ~ /^[0-9]+$/) v["Priority"] = $2
+            if ((head[3] == "PreemptMode" || head[3] == "Preempt") && $3 ~ /^[a-z]+$/) v["PreemptMode"] = $3
             cap = nodes(v["GrpTRES"]); cappu = nodes(v["MaxTRESPU"])
             printf "%s|%s|%s|%s|%s|%s|%s|%s\n", v["Name"], v["Priority"], v["PreemptMode"],
                    v["MaxWall"], v["MaxJobsPU"], v["MaxSubmitPU"], cap, cappu

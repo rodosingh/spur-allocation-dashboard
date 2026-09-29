@@ -25,7 +25,8 @@ elif name=='spur':
   if (p/'qos_fail').exists(): sys.exit(1)
   cf=p/'qos_calls'; n=int(cf.read_text()) if cf.exists() else 0; cf.write_text(str(n+1))
   if (p/'qos_fail_once').exists() and n==0: sys.exit(1)
-  print(f'{"Name":<30} {"Priority":<10} {"PreemptMode":<14} MaxWall')
+  ph,mh=('Prio','Preempt') if (p/'qos_short').exists() else ('Priority','PreemptMode')
+  print(f'{"Name":<30} {ph:<10} {mh:<14} MaxWall')
   for q,pr in [('high-qos',100 if (p/'downgrade').exists() else 10000),('low-qos',100),('other-qos',10000)]: print(f'{q:<30} {pr:<10} {"off":<14} 1440')
  else:
   print('tester amd-test x amd-test '+('high-qos,low-qos,other-qos' if (p/'multi').exists() else 'high-qos,low-qos')+' high-qos')
@@ -124,6 +125,12 @@ class TestCLI(unittest.TestCase):
   # A single empty read (controller hiccup) must not refuse a good submission:
   # qos_facts retries, so the start goes through.
   (self.p/'qos_fail_once').touch()
+  self.start('-q','high-qos')
+  self.assertEqual(len(self.jobs()),1)
+ def test_abbreviated_qos_headers_still_parse_priority(self):
+  # Some spur builds print "Prio"/"Preempt" instead of "Priority"/"PreemptMode";
+  # the priority must still be read so the start is not wrongly refused.
+  (self.p/'qos_short').touch()
   self.start('-q','high-qos')
   self.assertEqual(len(self.jobs()),1)
  def test_topup_rechecks_policy(self):
