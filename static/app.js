@@ -779,6 +779,34 @@ async function loadTopUsers(account) {
   }
 }
 
+function renderPoolWide(pool) {
+  const probe = state.poolSeats[pool.qos];
+  const running =
+    pool.poolRunningJobs != null ? pool.poolRunningJobs : probe && probe.known ? probe.poolRunningJobs : null;
+  const queued =
+    pool.poolQueuedJobs != null ? pool.poolQueuedJobs : probe && probe.known ? probe.poolQueuedJobs : null;
+  const div = element("div", "pool-wide");
+  if (running != null && queued != null) {
+    div.append(element("strong", "", `Pool-wide: ${running} running · ${queued} queued`));
+    div.append(
+      element(
+        "span",
+        "note",
+        " (all users; the scheduler hides other users' individual jobs — your own are listed below, recent usage-by-user further down)",
+      ),
+    );
+  } else {
+    div.append(
+      element(
+        "span",
+        "note",
+        'Pool-wide running/queued not known yet — use "check seats" on this row to probe it. Your own jobs are listed below.',
+      ),
+    );
+  }
+  return div;
+}
+
 async function checkSeats(pool) {
   const key = pool.qos;
   if (state.poolSeatsLoading.has(key)) return;
@@ -813,6 +841,24 @@ function renderPools() {
       pool.poolUsedNodes != null ? pool.poolUsedNodes : probe && probe.known ? probe.usedNodes : null;
     const effCap = pool.nodeCap != null ? pool.nodeCap : probe && probe.known ? probe.nodeCap : null;
     const seatsKnown = effUsed != null && effCap != null;
+    const effRunning = seatsKnown
+      ? pool.poolRunningJobs != null
+        ? pool.poolRunningJobs
+        : probe
+          ? probe.poolRunningJobs
+          : null
+      : null;
+    const effQueued = seatsKnown
+      ? pool.poolQueuedJobs != null
+        ? pool.poolQueuedJobs
+        : probe
+          ? probe.poolQueuedJobs
+          : null
+      : null;
+    const queuedCell = element("span", seatsKnown ? "" : "muted", seatsKnown ? String(effQueued) : "?");
+    queuedCell.title = seatsKnown
+      ? `${effQueued} job(s) queued pool-wide across all users (${effRunning} running).`
+      : `Pool-wide queued isn't known here until probed. You have ${pool.userPending} queued. Use "check seats".`;
     const usageCell = element("div");
     let usageLabel;
     let usageTip;
@@ -859,7 +905,7 @@ function renderPools() {
       cell(pool.priority),
       cell(pool.preemptMode === "off" ? statusBadge("SAFE") : statusBadge(pool.preemptMode.toUpperCase())),
       cell(usageCell),
-      cell(pool.queuedJobs),
+      cell(queuedCell),
       cell(`${pool.userRunning} running · ${pool.userPending} waiting`),
       cell(
         `wall ${pool.maxWallMinutes ? `${Math.round(pool.maxWallMinutes / 60)}h` : "∞"} · ` +
@@ -922,6 +968,7 @@ function renderPools() {
         nestedBody.append(nestedRow);
       }
       nested.append(nestedHead, nestedBody);
+      host.prepend(renderPoolWide(pool));
       host.append(nested);
       host.append(renderTopUsers(pool.account));
       detailCell.append(host);

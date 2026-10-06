@@ -71,7 +71,7 @@ elif name=='scontrol':
    q=j.get('qos')
    if q and q not in seen:
     print(f'QOS={q} MaxWall=1-00:00:00 MaxJobsPU=N MaxSubmitJobsPU=N MaxTRESPU=N')
-    print('   GrpJobs=N(1) GrpSubmitJobs=N(1) GrpTRES=cpu=N(50),node=7(3)')
+    print('   GrpJobs=N(2) GrpSubmitJobs=N(6) GrpTRES=cpu=N(50),node=7(4)')
     seen.add(q)
 '''
 class TestCLI(unittest.TestCase):
@@ -167,7 +167,9 @@ class TestCLI(unittest.TestCase):
  def test_pools_json_reports_pool_wide_usage_when_known(self):
   pools={p['qos']:p for p in json.loads(self.runcli('pools-json').stdout)['pools']}
   self.assertEqual(pools['high-qos']['poolUsedNodes'],2)   # assoc_mgr node=5(2) -> 2 pool-wide
+  self.assertEqual((pools['high-qos']['poolRunningJobs'],pools['high-qos']['poolQueuedJobs']),(2,1))  # GrpJobs=2, GrpSubmit=3 -> 1 queued
   self.assertIsNone(pools['low-qos']['poolUsedNodes'])     # absent from assoc_mgr -> unknown, not 0
+  self.assertIsNone(pools['low-qos']['poolQueuedJobs'])    # unknown, not 0 (pools-json never probes)
  def test_pools_json_pool_usage_unknown_when_controller_is_silent(self):
   (self.p/'assoc_fail').touch()
   pools={p['qos']:p for p in json.loads(self.runcli('pools-json').stdout)['pools']}
@@ -182,12 +184,15 @@ class TestCLI(unittest.TestCase):
  def test_seats_probes_hidden_pool_then_cancels(self):
   d=json.loads(self.runcli('seats-json','amd-test','low-qos').stdout)
   self.assertTrue(d['probed'])  # not visible -> held dummy submitted
-  self.assertEqual((d['nodeCap'],d['usedNodes'],d['free']),(7,3,4))
+  self.assertEqual((d['nodeCap'],d['usedNodes'],d['free']),(7,4,3))
+  # GrpJobs=2, GrpSubmitJobs=6; our own probe dropped -> 5 submitted -> 5-2=3 queued
+  self.assertEqual((d['poolRunningJobs'],d['poolQueuedJobs']),(2,3))
   self.assertEqual(self.jobs(),[])  # held dummy was cancelled -> queue clean
  def test_pools_auto_probes_unknown_pools_then_cleans_up(self):
   out=self.runcli('pools',env=dict(self.env,NODEHOLD_PROBE_SEATS='1')).stdout
   row=next(l for l in out.splitlines() if 'low-qos' in l and 'amd-test' in l)
-  self.assertEqual(row.split()[5],'3')  # USED filled pool-wide (node=7(3) -> 3 used), not ~0
+  self.assertEqual(row.split()[5],'4')  # USED filled pool-wide (node=7(4) -> 4 used), not ~0
+  self.assertEqual(row.split()[6],'3')  # QUEUED pool-wide = submitted(6)-own-probe-running(2) = 3
   self.assertEqual(self.jobs(),[])       # every probe was cancelled
  def test_topup_rechecks_policy(self):
   self.start('-q','high-qos');j=self.jobs();j[0].update(state='RUNNING',node='node026');(self.p/'jobs.json').write_text(json.dumps(j))

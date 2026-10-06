@@ -1068,6 +1068,16 @@ tr.mine {
   cursor: default;
 }
 
+.pool-wide {
+  margin: 2px 0 10px;
+  font-size: 0.82rem;
+}
+
+.pool-wide .note {
+  color: var(--muted, #8a8a8a);
+  font-size: 0.75rem;
+}
+
 .top-users-panel {
   margin-top: 14px;
 }

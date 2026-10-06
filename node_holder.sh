@@ -853,20 +853,30 @@ pool_usage() {
         END { for (q in seen) printf "%s|%d|%d\n", q, run[q], wait[q] }'
 }
 
-# "qos|cap|used" POOL-WIDE, from the controller's association manager -- the one
-# source that counts every user's nodes, not just yours. assoc_mgr prints each
-# QOS GrpTRES as node=CAP(USED): a numeric CAP is the QOSGrpNodeLimit, N means no
-# limit, and USED is the live cluster-wide node count. The controller only lists
+# "qos|cap|used|running|submitted" POOL-WIDE, from the controller's association
+# manager -- the one source that counts every user's jobs, not just yours.
+# assoc_mgr prints, on one line per QOS: GrpJobs=N(R) GrpSubmitJobs=N(S)
+# GrpTRES=...,node=CAP(USED). A numeric CAP is the QOSGrpNodeLimit (N = no limit);
+# USED is the live cluster-wide node count; R is running jobs and S is submitted
+# jobs (running + queued), so pool-wide queued = S - R. The controller only lists
 # a QOS while you hold a job in it (running or queued), so a QOS absent here is
 # "unknown", never zero -- callers must distinguish the two.
 qos_pool_usage() {
     scontrol show assoc_mgr 2>/dev/null | awk '
         /^QOS=/ { q = substr($1, 5); next }
         q != "" && /GrpTRES=/ && match($0, /node=[A-Za-z0-9]+\([0-9]+\)/) {
-            tok = substr($0, RSTART, RLENGTH); sub(/^node=/, "", tok)
-            cap = tok; sub(/\(.*/, "", cap)
-            used = tok; sub(/^[^(]*\(/, "", used); sub(/\)$/, "", used)
-            print q "|" cap "|" used; q = ""
+            nodetok = substr($0, RSTART, RLENGTH)
+            cap = nodetok; sub(/^node=/, "", cap); sub(/\(.*/, "", cap)
+            used = nodetok; sub(/^[^(]*\(/, "", used); sub(/\)$/, "", used)
+            run = ""
+            if (match($0, /GrpJobs=[A-Za-z0-9]+\([0-9]+\)/)) {
+                run = substr($0, RSTART, RLENGTH); sub(/^[^(]*\(/, "", run); sub(/\)$/, "", run)
+            }
+            subj = ""
+            if (match($0, /GrpSubmitJobs=[A-Za-z0-9]+\([0-9]+\)/)) {
+                subj = substr($0, RSTART, RLENGTH); sub(/^[^(]*\(/, "", subj); sub(/\)$/, "", subj)
+            }
+            print q "|" cap "|" used "|" run "|" subj; q = ""
         }'
 }
 
@@ -1316,6 +1326,7 @@ POOL_ROW='  %-19s %-23s %6s %-8s %6s %5s %5s %8s %8s\n'
 cmd_pools() {
     local facts usage mine defs all acct qos def f u m prio pre wall cap cappu used wait best
     local mrun mpend trun=0 tpend=0 tnodes=0 poolusage pu poolused used_disp
+    local poolrun poolsub queued_disp pq
 
     # Every pool you may submit to, not one per account: an account can grant
     # several, and a chain may go in any of them. my_pools reports only the
@@ -1343,18 +1354,26 @@ cmd_pools() {
         pu=$(pick "$qos" "$poolusage")
         prio=$(fld 2 "$f"); pre=$(fld 3 "$f"); wall=$(fld 4 "$f"); cap=$(fld 7 "$f")
         cappu=$(fld 8 "$f"); used=$(fld 2 "$u"); wait=$(fld 3 "$u"); poolused=$(fld 3 "$pu")
+        poolrun=$(fld 4 "$pu"); poolsub=$(fld 5 "$pu")
         mrun=$(fld 2 "$m"); mpend=$(fld 3 "$m")
         mrun=${mrun:-0}; mpend=${mpend:-0}
-        # USED is the live pool-wide count when the controller will report it (any
-        # QOS you hold a job in, running or queued); otherwise ~your-own only.
-        used_disp=$([ -n "$pu" ] && echo "${poolused:-0}" || echo "~${used:-0}")
+        # USED and QUEUED are the live pool-wide counts when the controller will
+        # report them (any QOS you hold a job in, or one just probed); otherwise
+        # ~your-own. Pool-wide queued = submitted - running.
+        if [ -n "$pu" ]; then
+            used_disp=${poolused:-0}
+            pq=$(( ${poolsub:-0} - ${poolrun:-0} )); [ "$pq" -lt 0 ] && pq=0
+            queued_disp=$pq
+        else
+            used_disp="~${used:-0}"; queued_disp="~${wait:-0}"
+        fi
 
 
         # shellcheck disable=SC2059
         printf "$POOL_ROW" \
                "${acct}${def}" "$qos" "${prio:--}" \
                "$([ "$pre" = off ] && echo no || echo "${pre:-?}")" \
-               "${cap:--}" "$used_disp" "${wait:-0}" \
+               "${cap:--}" "$used_disp" "$queued_disp" \
                "$([ "$mrun" = 0 ] && echo '-' || echo "$mrun")" \
                "$([ "$mpend" = 0 ] && echo '-' || echo "$mpend")"
 
@@ -1394,7 +1413,7 @@ cmd_pools() {
 # and narrative lines.
 cmd_pools_json() {
     local facts usage mine defs selfuse all owned trun tpend tnodes best poolusage
-    local acct qos assoc def f u m prio pre wall cap cappu used wait mrun mpend pu poolused
+    local acct qos assoc def f u m prio pre wall cap cappu used wait mrun mpend pu poolused poolrun poolsub pq
     local first=1
     facts=$(qos_facts); usage=$(pool_usage); mine=$(my_qos_pairs)
     defs=$(my_pools); selfuse=$(my_usage); poolusage=$(qos_pool_usage)
@@ -1441,6 +1460,7 @@ cmd_pools_json() {
         prio=$(fld 2 "$f"); pre=$(fld 3 "$f"); wall=$(fld 4 "$f")
         cap=$(fld 7 "$f"); cappu=$(fld 8 "$f")
         used=$(fld 2 "$u"); wait=$(fld 3 "$u"); poolused=$(fld 3 "$pu")
+        poolrun=$(fld 4 "$pu"); poolsub=$(fld 5 "$pu")
         mrun=$(fld 2 "$m"); mpend=$(fld 3 "$m")
         [ "$first" = 1 ] || printf ','
         first=0
@@ -1458,6 +1478,10 @@ cmd_pools_json() {
         printf ',"usedNodes":'; json_number_or_null "${used:-0}"
         printf ',"poolUsedNodes":'
         if [ -n "$pu" ]; then json_number_or_null "${poolused:-0}"; else printf 'null'; fi
+        printf ',"poolRunningJobs":'
+        if [ -n "$pu" ]; then json_number_or_null "${poolrun:-0}"; else printf 'null'; fi
+        printf ',"poolQueuedJobs":'
+        if [ -n "$pu" ]; then pq=$(( ${poolsub:-0} - ${poolrun:-0} )); [ "$pq" -lt 0 ] && pq=0; json_number_or_null "$pq"; else printf 'null'; fi
         printf ',"queuedJobs":'; json_number_or_null "${wait:-0}"
         printf ',"userRunning":'; json_number_or_null "${mrun:-0}"
         printf ',"userPending":'; json_number_or_null "${mpend:-0}"
@@ -1544,7 +1568,7 @@ seat_probe() {
 # job there) it is read directly; otherwise a held dummy is submitted, read, and
 # cancelled. The cancel is trapped so a held job never survives this function.
 seat_lookup() {
-    local account=$1 qos=$2 row jid probed=0
+    local account=$1 qos=$2 row jid probed=0 cap used run subj
     row=$(pick "$qos" "$(qos_pool_usage)")
     if [ -z "$row" ]; then
         jid=$(seat_probe "$account" "$qos") || jid=""
@@ -1557,7 +1581,10 @@ seat_lookup() {
             trap - EXIT INT TERM
         fi
     fi
-    printf '%s|%s|%s\n' "$(fld 2 "$row")" "$(fld 3 "$row")" "$probed"
+    cap=$(fld 2 "$row"); used=$(fld 3 "$row"); run=$(fld 4 "$row"); subj=$(fld 5 "$row")
+    # Our own probe is one submitted job; drop it so the queued count is others'.
+    [ "$probed" = 1 ] && [ -n "$subj" ] && { subj=$(( subj - 1 )); [ "$subj" -lt 0 ] && subj=0; }
+    printf '%s|%s|%s|%s|%s\n' "$cap" "$used" "$run" "$subj" "$probed"
 }
 
 # Given "account|qos" pairs and the usage already readable, float one held dummy
@@ -1565,27 +1592,31 @@ seat_lookup() {
 # cancel every probe. Held dummies allocate nothing and are always cancelled
 # (trapped), so this costs no seat. Echoes the augmented "qos|cap|used".
 probe_all_pools() {
-    local mine=$1 known=$2 acct qos jid jids="" done_qos=" "
+    local mine=$1 known=$2 acct qos jid jids="" done_qos=" " probed_qos=" "
     while IFS='|' read -r acct qos; do
         [ -n "$qos" ] || continue
         case "$done_qos" in *" $qos "*) continue ;; esac   # one probe per distinct qos
         done_qos="$done_qos$qos "
         [ -n "$(pick "$qos" "$known")" ] && continue        # already readable
-        jid=$(seat_probe "$acct" "$qos") && jids="$jids $jid"
+        jid=$(seat_probe "$acct" "$qos") && { jids="$jids $jid"; probed_qos="$probed_qos$qos "; }
     done <<< "$mine"
     if [ -z "$jids" ]; then printf '%s\n' "$known"; return 0; fi
     trap 'for jid in $jids; do scancel "$jid" >/dev/null 2>&1 || true; done' EXIT INT TERM
     sleep "${NODEHOLD_PROBE_WAIT:-2}"
-    qos_pool_usage
+    # Drop our own held dummy from the submitted count of the pools we probed, so
+    # QUEUED (submitted - running) reflects other users, not our throwaway.
+    qos_pool_usage | awk -F'|' -v probed="$probed_qos" '
+        index(probed, " " $1 " ") && $5 != "" { s = $5 - 1; $5 = (s < 0 ? 0 : s) }
+        { print $1 "|" $2 "|" $3 "|" $4 "|" $5 }'
     for jid in $jids; do scancel "$jid" >/dev/null 2>&1 || true; done
     trap - EXIT INT TERM
 }
 
 cmd_seats_json() {
-    local account=${1:-} qos=${2:-} info cap used probed free
+    local account=${1:-} qos=${2:-} info cap used run subj probed free queued
     [ -n "$account" ] && [ -n "$qos" ] || die "seats-json needs an account and a qos, e.g. '${SELF} seats-json amd-hyperloom-geak amd-hyperloom-geak-qos'"
     info=$(seat_lookup "$account" "$qos")
-    cap=$(fld 1 "$info"); used=$(fld 2 "$info"); probed=$(fld 3 "$info")
+    cap=$(fld 1 "$info"); used=$(fld 2 "$info"); run=$(fld 3 "$info"); subj=$(fld 4 "$info"); probed=$(fld 5 "$info")
     printf '{"schemaVersion":1,"account":'; json_quote "$account"
     printf ',"qos":'; json_quote "$qos"
     printf ',"probed":%s' "$([ "$probed" = 1 ] && echo true || echo false)"
@@ -1598,23 +1629,28 @@ cmd_seats_json() {
     else
         printf 'null'
     fi
+    printf ',"poolRunningJobs":'; json_number_or_null "$run"
+    printf ',"poolQueuedJobs":'
+    if [ -n "$run" ] && [ -n "$subj" ]; then queued=$(( subj - run )); [ "$queued" -lt 0 ] && queued=0; json_number_or_null "$queued"; else printf 'null'; fi
     printf '}\n'
 }
 
 cmd_seats() {
-    local account=${1:-} qos=${2:-} info cap used probed free
+    local account=${1:-} qos=${2:-} info cap used run subj probed free queued tail
     [ -n "$account" ] && [ -n "$qos" ] || die "seats needs an account and a qos, e.g. '${SELF} seats amd-hyperloom-geak amd-hyperloom-geak-qos'"
     info=$(seat_lookup "$account" "$qos")
-    cap=$(fld 1 "$info"); used=$(fld 2 "$info"); probed=$(fld 3 "$info")
+    cap=$(fld 1 "$info"); used=$(fld 2 "$info"); run=$(fld 3 "$info"); subj=$(fld 4 "$info"); probed=$(fld 5 "$info")
     [ "$probed" = 1 ] && say "probed ${account}/${qos} with a held dummy job (submitted, read, cancelled)"
     if [ -z "$used" ]; then
         say "${qos}: could not read live usage (no job here, and the probe did not land -- submit limit or a busy controller)"
         return 0
     fi
+    tail=""
+    [ -n "$run" ] && [ -n "$subj" ] && { queued=$(( subj - run )); [ "$queued" -lt 0 ] && queued=0; tail="; ${run} running, ${queued} queued (all users)"; }
     case "$cap" in
-        ''|*[!0-9]*) say "${qos}: ${used} node(s) in use pool-wide, no node cap" ;;
+        ''|*[!0-9]*) say "${qos}: ${used} node(s) in use pool-wide, no node cap${tail}" ;;
         *) free=$(( cap - used )); [ "$free" -lt 0 ] && free=0
-           say "${qos}: ${used} / ${cap} node(s) in use pool-wide -- ${free} free" ;;
+           say "${qos}: ${used} / ${cap} node(s) in use pool-wide -- ${free} free${tail}" ;;
     esac
 }
 

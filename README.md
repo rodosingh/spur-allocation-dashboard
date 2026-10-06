@@ -181,8 +181,11 @@ Two people on one login host must each pick a distinct `--port`.
   unknown), because this scheduler hides other users' jobs from `squeue`; a
   **check seats** button next to it probes the live total on demand by briefly
   submitting a *held* throwaway job (which allocates nothing), reading the
-  controller, and cancelling it. Expand a row for your jobs in that QoS plus a
-  **recent top users** panel (from `sreport`) showing who has been using the pool.
+  controller, and cancelling it. **Queued** is likewise pool-wide (all users),
+  computed as submitted − running from the controller. Expanding a row shows a
+  pool-wide `running · queued` summary, your own jobs in that QoS, and a **recent
+  top users** panel (from `sreport`): this scheduler hides other users'
+  *individual* jobs, so the summary gives the counts and top-users gives the names.
 - **SQ** — the dashboard equivalent of the personal `sq` alias.
 - **SQA** — all cluster jobs with text/state filters. This expensive view loads
   only when opened or manually refreshed.
