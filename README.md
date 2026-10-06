@@ -173,8 +173,12 @@ Two people on one login host must each pick a distinct `--port`.
 - **Status** — maintained chains, runway, tending state, resources, active links,
   and every job in your personal queue.
 - **Pools** — live account/QoS policy, configured priority, preemption mode,
-  cap/usage, queue pressure, personal usage, wall limits, and submit limits.
-  Click a row to expand all jobs in the QoS; your jobs are highlighted.
+  the cap and your usage against it, queue pressure, personal usage, wall limits,
+  and submit limits. Usage counts only *your* jobs: this scheduler hides other
+  users' jobs from `squeue`, so a pool can be full (your submit pends on
+  `QOSGrpNodeLimit`) while usage still reads `0`. Expand a row to see your jobs
+  in that QoS plus a **recent top users** panel (from accounting / `sreport`)
+  showing who has actually been using the pool.
 - **SQ** — the dashboard equivalent of the personal `sq` alias.
 - **SQA** — all cluster jobs with text/state filters. This expensive view loads
   only when opened or manually refreshed.
@@ -255,6 +259,7 @@ Read-only:
 - `GET /api/history`
 - `GET /api/diagnostics`
 - `GET /api/logs?chain=<name>&kind=tick|arm|on-start`
+- `GET /api/top-users?account=<name>`
 - `GET /api/csrf-token`
 
 Mutating:

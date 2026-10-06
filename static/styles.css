@@ -1043,6 +1043,21 @@ tr.mine {
   background: var(--red);
 }
 
+.top-users-panel {
+  margin-top: 14px;
+}
+
+.top-users-panel h4 {
+  margin: 0 0 2px;
+  font-size: 0.82rem;
+}
+
+.top-users-panel .note {
+  margin: 0 0 8px;
+  font-size: 0.75rem;
+  color: var(--muted, #8a8a8a);
+}
+
 .empty {
   padding: 30px;
   color: var(--muted);

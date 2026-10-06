@@ -322,6 +322,29 @@ class HandlerTests(unittest.TestCase):
         status, payload = self.request("GET", "/api/csrf-token")
         self.assertEqual(payload["token"], "live-token")
 
+    def test_top_users_endpoint_returns_usage(self):
+        fake = {
+            "schemaVersion": 1,
+            "account": "amd-brain-models",
+            "since": "now-1days",
+            "users": [
+                {"user": "chuschen", "cpuSeconds": 86148968, "gpuSeconds": 0, "jobs": 106}
+            ],
+        }
+        with patch.object(holder, "get_top_users", return_value=fake) as spy:
+            status, payload = self.request(
+                "GET", "/api/top-users?account=amd-brain-models"
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["users"][0]["user"], "chuschen")
+        self.assertIn("updatedAt", payload)
+        spy.assert_called_once_with("amd-brain-models")
+
+    def test_top_users_endpoint_rejects_an_invalid_account(self):
+        status, payload = self.request("GET", "/api/top-users?account=inv%40lid")
+        self.assertEqual(status, 400)
+        self.assertIn("invalid account", payload["error"])
+
     def test_mutation_requires_token_before_calling_backend(self):
         with patch.object(app, "create_request") as create:
             status, payload = self.request(

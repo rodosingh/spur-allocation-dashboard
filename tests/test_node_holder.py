@@ -28,6 +28,13 @@ elif name=='spur':
   ph,mh=('Prio','Preempt') if (p/'qos_short').exists() else ('Priority','PreemptMode')
   print(f'{"Name":<30} {ph:<10} {mh:<14} MaxWall')
   for q,pr in [('high-qos',100 if (p/'downgrade').exists() else 10000),('low-qos',100),('other-qos',10000)]: print(f'{q:<30} {pr:<10} {"off":<14} 1440')
+ elif a[:1]==['report']:
+  print('amd-test            |                    |        1000|           0|           5')
+  print('                    |alice               |         800|           0|           3')
+  print('                    |bob                 |         200|           0|           2')
+  print('                    |idle                |           0|           0|           0')
+  print('amd-other           |                    |         500|           0|           1')
+  print('                    |carol               |         500|           0|           1')
  else:
   print('tester amd-test x amd-test '+('high-qos,low-qos,other-qos' if (p/'multi').exists() else 'high-qos,low-qos')+' high-qos')
   if (p/'duplicate_qos').exists(): print('tester amd-other x amd-other high-qos high-qos')
@@ -133,6 +140,17 @@ class TestCLI(unittest.TestCase):
   (self.p/'qos_short').touch()
   self.start('-q','high-qos')
   self.assertEqual(len(self.jobs()),1)
+ def test_top_users_lists_account_users_busiest_first(self):
+  d=json.loads(self.runcli('top-users-json','amd-test').stdout)
+  self.assertEqual(d['account'],'amd-test')
+  self.assertEqual([u['user'] for u in d['users']],['alice','bob'])  # idle (0) dropped, busiest first
+  self.assertEqual((d['users'][0]['cpuSeconds'],d['users'][0]['jobs']),(800,3))
+ def test_top_users_scopes_to_the_named_account(self):
+  d=json.loads(self.runcli('top-users-json','amd-other').stdout)
+  self.assertEqual([u['user'] for u in d['users']],['carol'])
+ def test_top_users_requires_an_account(self):
+  r=self.runcli('top-users-json',ok=False)
+  self.assertIn('needs an account',r.stdout+r.stderr)
  def test_topup_rechecks_policy(self):
   self.start('-q','high-qos');j=self.jobs();j[0].update(state='RUNNING',node='node026');(self.p/'jobs.json').write_text(json.dumps(j))
   (self.p/'downgrade').touch()

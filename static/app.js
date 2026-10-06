@@ -8,6 +8,8 @@ const state = {
   diagnostics: null,
   currentTab: "status",
   expandedPools: new Set(),
+  topUsers: {},
+  topUsersLoading: new Set(),
   refreshing: false,
   messageTimer: null,
   confirmResolve: null,
@@ -717,6 +719,64 @@ function renderQueueTable(hostSelector, jobs, allowActions = false) {
   host.append(card);
 }
 
+function renderTopUsers(account) {
+  const panel = element("div", "top-users-panel");
+  panel.append(element("h4", "", "Recent top users · last 24h"));
+  panel.append(
+    element(
+      "p",
+      "note",
+      "From accounting (sreport). squeue hides other users here, so this is the only view of who is actually on this pool.",
+    ),
+  );
+  const data = state.topUsers[account];
+  if (data === undefined) {
+    panel.append(element("p", "empty", "Loading…"));
+    loadTopUsers(account);
+    return panel;
+  }
+  if (data === null || data.error) {
+    panel.append(element("p", "empty", `Couldn't load usage${data?.error ? `: ${data.error}` : "."}`));
+    return panel;
+  }
+  if (!data.users || !data.users.length) {
+    panel.append(element("p", "empty", "No recent usage recorded for this account."));
+    return panel;
+  }
+  const table = element("table");
+  const thead = element("thead");
+  const headRow = element("tr");
+  for (const label of ["User", "CPU-hours", "Jobs"]) headRow.append(element("th", "", label));
+  thead.append(headRow);
+  const tbody = element("tbody");
+  const me = state.capabilities?.user;
+  for (const user of data.users) {
+    const row = element("tr", user.user === me ? "mine" : "");
+    row.append(
+      cell(`${user.user}${user.user === me ? " · you" : ""}`),
+      cell(Math.round((user.cpuSeconds || 0) / 3600).toLocaleString()),
+      cell(String(user.jobs ?? 0)),
+    );
+    tbody.append(row);
+  }
+  table.append(thead, tbody);
+  panel.append(table);
+  return panel;
+}
+
+async function loadTopUsers(account) {
+  if (state.topUsersLoading.has(account)) return;
+  state.topUsersLoading.add(account);
+  try {
+    state.topUsers[account] = await fetchJson(`/api/top-users?account=${encodeURIComponent(account)}`);
+  } catch (error) {
+    state.topUsers[account] = null;
+  } finally {
+    state.topUsersLoading.delete(account);
+    renderPools();
+  }
+}
+
 function renderPools() {
   const body = $("#pool-rows");
   body.replaceChildren();
@@ -728,7 +788,12 @@ function renderPools() {
     row.setAttribute("aria-expanded", String(state.expandedPools.has(key)));
     const usage = pool.nodeCap ? Math.min(100, Math.round((pool.usedNodes / pool.nodeCap) * 100)) : 0;
     const usageCell = element("div");
-    usageCell.append(element("span", "", `${pool.usedNodes} / ${pool.nodeCap ?? "∞"}`));
+    const usageText = element("span", "", `you: ${pool.usedNodes} / ${pool.nodeCap ?? "∞"}`);
+    usageText.title =
+      "Only your own jobs are counted — this cluster hides other users' jobs from squeue, " +
+      "so true pool-wide usage isn't available (a pool can be full while this shows 0). " +
+      "Expand the row to see who's been using it recently.";
+    usageCell.append(usageText);
     const bar = element("div", "usage-bar");
     const fill = element("i", usage >= 100 ? "full" : usage >= 80 ? "warning" : "");
     fill.style.width = `${usage}%`;
@@ -804,6 +869,7 @@ function renderPools() {
       }
       nested.append(nestedHead, nestedBody);
       host.append(nested);
+      host.append(renderTopUsers(pool.account));
       detailCell.append(host);
       detailRow.append(detailCell);
       body.append(detailRow);

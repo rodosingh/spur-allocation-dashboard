@@ -122,6 +122,12 @@ def build_pools() -> dict[str, Any]:
     return pools
 
 
+def build_top_users(account: str) -> dict[str, Any]:
+    data = holder.get_top_users(account)
+    data["updatedAt"] = utc_now()
+    return data
+
+
 def build_history() -> dict[str, Any]:
     history_error = None
     try:
@@ -257,6 +263,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             chain = query.get("chain", [""])[0]
             kind = query.get("kind", ["tick"])[0]
             self.send_json(HTTPStatus.OK, holder.read_log(chain, kind))
+            return True
+        if path == "/api/top-users":
+            account = query.get("account", [""])[0]
+            self.send_json(HTTPStatus.OK, build_top_users(account))
             return True
         function = routes.get(path)
         if not function:

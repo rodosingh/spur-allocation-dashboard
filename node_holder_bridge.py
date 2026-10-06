@@ -34,6 +34,7 @@ MIN_PRIORITY = int(os.environ.get("NODEHOLD_MIN_PRIO") or 10_000)
 CHAIN_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 BASE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,48}$")
 NODE_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+ACCOUNT_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 JOB_ID_RE = re.compile(r"^\d+$")
 SAFE_ACTIONS = {"topup", "arm", "clear", "tend", "untend", "release", "shrink"}
 
@@ -66,6 +67,29 @@ def _run_json(command: str, *, prefix: str | None = None) -> dict[str, Any]:
 
 def get_pools() -> dict[str, Any]:
     return _run_json("pools-json")
+
+
+def get_top_users(account: str) -> dict[str, Any]:
+    """Recent per-user usage for one account, from accounting (sreport).
+
+    squeue hides other users here, so this is the only way to see who is
+    actually holding a contended pool. The account is validated and passed as
+    an argv element (never a shell string).
+    """
+    if not ACCOUNT_RE.fullmatch(account):
+        raise ValueError("invalid account name")
+    output = scheduler.run_command(
+        [str(NODE_HOLDER), "top-users-json", account],
+        timeout=60,
+        env=_environment(),
+    )
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise BridgeError(f"top-users-json returned invalid JSON: {error}") from error
+    if not isinstance(payload, dict):
+        raise BridgeError("top-users-json did not return an object")
+    return payload
 
 
 def _active_managed_names(jobs: list[dict[str, Any]]) -> list[str]:

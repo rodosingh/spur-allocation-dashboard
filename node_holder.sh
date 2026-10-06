@@ -1354,9 +1354,12 @@ cmd_pools() {
     best=$(best_pool 2>/dev/null || true)
     [ -n "$best" ] &&
         say "  Naming no pool gets you ${best%%|*}/${best#*|}, the best of these:"$'\n'"  highest priority first, then surviving preemption, then the larger quota."
-    say "  * = your default account. CAP/USED/QUEUED are the WHOLE pool, shared"
-    say "  with every account on that QOS -- which is why idle-looking nodes are"
-    say "  often unreachable, and why USED = CAP means you queue on QOSGrpNodeLimit."
+    say "  * = your default account. CAP is the whole pool's node quota, but this"
+    say "  scheduler lets you see only your OWN jobs, so USED/QUEUED/YOU count just"
+    say "  what is visible to you -- everyone else on the same QOS is hidden. A pool"
+    say "  can therefore be full (your submit pends on QOSGrpNodeLimit, idle-looking"
+    say "  nodes stay unreachable) while USED still reads 0. For who has actually been"
+    say "  using a pool lately, run '${SELF} top-users <account>'."
     say "  PREEMPT describes policy, not a reservation or guarantee against cancellation."
 }
 
@@ -1432,6 +1435,66 @@ cmd_pools_json() {
         printf '}'
     done <<< "$mine"
     printf ']}\n'
+}
+
+# --- top users --------------------------------------------------------------
+# squeue on this scheduler shows only your own jobs, so neither you nor the
+# dashboard can see who else is filling a shared QOS. Accounting can: sreport
+# lists per-user usage for an account. This is recent usage, not live occupancy,
+# but it answers "who has been hammering this pool lately" -- enough to explain a
+# QOSGrpNodeLimit that is otherwise invisible to you.
+# "user|cpu_seconds|gpu_seconds|jobs" for one account, busiest first. The report
+# prints an account total (blank user) followed by its per-user rows (blank
+# account), so the account is carried down from the last non-blank line.
+top_users_rows() {
+    spur report cluster AccountUtilizationByUser -s "$2" -p 2>/dev/null \
+    | awk -F'|' -v acct="$1" '
+        { gsub(/^[ \t]+|[ \t]+$/, "", $1); gsub(/^[ \t]+|[ \t]+$/, "", $2)
+          cur = ($1 != "" ? $1 : cur) }
+        cur == acct && $2 != "" && ($3 + 0 > 0 || $4 + 0 > 0 || $5 + 0 > 0) {
+            printf "%s|%d|%d|%d\n", $2, $3 + 0, $4 + 0, $5 + 0
+        }' \
+    | sort -t'|' -k2 -rn
+}
+
+cmd_top_users_json() {
+    local account=${1:-} since=${NODEHOLD_TOPUSERS_SINCE:-now-1days}
+    local rows user cpu gpu jobs first=1
+    [ -n "$account" ] || die "top-users-json needs an account, e.g. '${SELF} top-users-json amd-hyperloom-geak'"
+    rows=$(top_users_rows "$account" "$since")
+    printf '{"schemaVersion":1,"account":'; json_quote "$account"
+    printf ',"since":'; json_quote "$since"
+    printf ',"generatedAt":'; json_quote "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf ',"users":['
+    while IFS='|' read -r user cpu gpu jobs; do
+        [ -n "$user" ] || continue
+        [ "$first" = 1 ] || printf ','
+        first=0
+        printf '{"user":'; json_quote "$user"
+        printf ',"cpuSeconds":'; json_number_or_null "$cpu"
+        printf ',"gpuSeconds":'; json_number_or_null "$gpu"
+        printf ',"jobs":'; json_number_or_null "$jobs"
+        printf '}'
+    done <<< "$rows"
+    printf ']}\n'
+}
+
+cmd_top_users() {
+    local account=${1:-} since=${NODEHOLD_TOPUSERS_SINCE:-now-1days}
+    local rows user cpu gpu jobs
+    [ -n "$account" ] || die "top-users needs an account, e.g. '${SELF} top-users amd-hyperloom-geak'"
+    rows=$(top_users_rows "$account" "$since")
+    say "account: ${account}   window: ${since}"
+    say "per-user usage from accounting (recent, not live occupancy); your squeue hides others"
+    printf '  %-16s %10s %6s\n' USER CPU-HOURS JOBS
+    if [ -z "$rows" ]; then
+        say "  (no recent usage recorded for this account)"
+        return 0
+    fi
+    while IFS='|' read -r user cpu gpu jobs; do
+        [ -n "$user" ] || continue
+        printf '  %-16s %10d %6d\n' "$user" "$(( cpu / 3600 ))" "$jobs"
+    done <<< "$rows"
 }
 
 show_one() {
@@ -2471,6 +2534,10 @@ node_holder.sh -- keep ${PARTITION} GPU nodes across a chain of batch jobs
   race             race eligible high-priority pools; cron keeps the winner
   pools            which accounts and QOS you may use, and how full each one is
   pools-json       pools as stable JSON for dashboards and other tools
+  top-users <acct> who has used an account's pools lately, from accounting --
+                   the only way to see past your own jobs when squeue hides them
+  top-users-json <acct>
+                   that same per-user usage as stable JSON for dashboards
   adopt <jobid>    chain behind a job you already hold, keeping its node
   status           show every chain, its node and remaining runway
   status-json      status as stable JSON for dashboards and other tools
@@ -2658,6 +2725,8 @@ case "${1:-}" in
     tick)   shift; cmd_tick   "$@" ;;
     pools)  shift; cmd_pools  "$@" ;;
     pools-json) shift; cmd_pools_json "$@" ;;
+    top-users) shift; cmd_top_users "$@" ;;
+    top-users-json) shift; cmd_top_users_json "$@" ;;
     race)   shift; cmd_race   "$@" ;;
     arm)    shift; cmd_arm    "$@" ;;
     clear)  shift; cmd_clear  "$@" ;;
