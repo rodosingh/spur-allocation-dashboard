@@ -786,13 +786,26 @@ function renderPools() {
     row.tabIndex = 0;
     row.setAttribute("role", "button");
     row.setAttribute("aria-expanded", String(state.expandedPools.has(key)));
-    const usage = pool.nodeCap ? Math.min(100, Math.round((pool.usedNodes / pool.nodeCap) * 100)) : 0;
+    const poolKnown = pool.poolUsedNodes != null && pool.nodeCap != null;
+    const usedForBar = poolKnown ? pool.poolUsedNodes : pool.usedNodes;
+    const usage = pool.nodeCap ? Math.min(100, Math.round((usedForBar / pool.nodeCap) * 100)) : 0;
     const usageCell = element("div");
-    const usageText = element("span", "", `you: ${pool.usedNodes} / ${pool.nodeCap ?? "∞"}`);
-    usageText.title =
-      "Only your own jobs are counted — this cluster hides other users' jobs from squeue, " +
-      "so true pool-wide usage isn't available (a pool can be full while this shows 0). " +
-      "Expand the row to see who's been using it recently.";
+    let usageLabel;
+    let usageTip;
+    if (poolKnown) {
+      const free = Math.max(0, pool.nodeCap - pool.poolUsedNodes);
+      usageLabel = `${pool.poolUsedNodes} / ${pool.nodeCap} · ${free} free`;
+      usageTip =
+        `Live pool-wide usage from the controller: ${pool.poolUsedNodes} of ${pool.nodeCap} ` +
+        `nodes in use across all users, ${free} free. Readable because you hold a job in this QoS.`;
+    } else {
+      usageLabel = `you: ${pool.usedNodes} / ${pool.nodeCap ?? "∞"}`;
+      usageTip =
+        "Only your own jobs — pool-wide usage isn't readable unless you hold a job in this QoS " +
+        "(this cluster hides other users' jobs). Submit one, or expand the row to see recent top users.";
+    }
+    const usageText = element("span", poolKnown ? "" : "muted", usageLabel);
+    usageText.title = usageTip;
     usageCell.append(usageText);
     const bar = element("div", "usage-bar");
     const fill = element("i", usage >= 100 ? "full" : usage >= 80 ? "warning" : "");

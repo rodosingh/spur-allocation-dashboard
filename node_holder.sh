@@ -853,6 +853,23 @@ pool_usage() {
         END { for (q in seen) printf "%s|%d|%d\n", q, run[q], wait[q] }'
 }
 
+# "qos|cap|used" POOL-WIDE, from the controller's association manager -- the one
+# source that counts every user's nodes, not just yours. assoc_mgr prints each
+# QOS GrpTRES as node=CAP(USED): a numeric CAP is the QOSGrpNodeLimit, N means no
+# limit, and USED is the live cluster-wide node count. The controller only lists
+# a QOS while you hold a job in it (running or queued), so a QOS absent here is
+# "unknown", never zero -- callers must distinguish the two.
+qos_pool_usage() {
+    scontrol show assoc_mgr 2>/dev/null | awk '
+        /^QOS=/ { q = substr($1, 5); next }
+        q != "" && /GrpTRES=/ && match($0, /node=[A-Za-z0-9]+\([0-9]+\)/) {
+            tok = substr($0, RSTART, RLENGTH); sub(/^node=/, "", tok)
+            cap = tok; sub(/\(.*/, "", cap)
+            used = tok; sub(/^[^(]*\(/, "", used); sub(/\)$/, "", used)
+            print q "|" cap "|" used; q = ""
+        }'
+}
+
 pick() { printf '%s\n' "$2" | awk -F'|' -v k="$1" '$1==k {print; exit}'; }
 
 # The QOS an account's jobs land in unless one is named explicitly.
@@ -1298,12 +1315,13 @@ cmd_adopt() {
 POOL_ROW='  %-19s %-23s %6s %-8s %6s %5s %5s %8s %8s\n'
 cmd_pools() {
     local facts usage mine defs all acct qos def f u m prio pre wall cap cappu used wait best
-    local mrun mpend trun=0 tpend=0 tnodes=0
+    local mrun mpend trun=0 tpend=0 tnodes=0 poolusage pu poolused used_disp
 
     # Every pool you may submit to, not one per account: an account can grant
     # several, and a chain may go in any of them. my_pools reports only the
     # association default, which used to hide amd-burst-qos under amd-hyperloom.
     facts=$(qos_facts); usage=$(pool_usage); mine=$(my_qos_pairs); defs=$(my_pools)
+    poolusage=$(qos_pool_usage)
     local selfuse; selfuse=$(my_usage)
     [ -n "$mine" ] || die "no associations found for ${ME}"
 
@@ -1319,17 +1337,21 @@ cmd_pools() {
         [ -n "$acct" ] || continue
         def=$(printf '%s\n' "$defs" | awk -F'|' -v a="$acct" '$1==a {print $3; exit}')
         f=$(pick "$qos" "$facts"); u=$(pick "$qos" "$usage"); m=$(pick "$qos" "$selfuse")
+        pu=$(pick "$qos" "$poolusage")
         prio=$(fld 2 "$f"); pre=$(fld 3 "$f"); wall=$(fld 4 "$f"); cap=$(fld 7 "$f")
-        cappu=$(fld 8 "$f"); used=$(fld 2 "$u"); wait=$(fld 3 "$u")
+        cappu=$(fld 8 "$f"); used=$(fld 2 "$u"); wait=$(fld 3 "$u"); poolused=$(fld 3 "$pu")
         mrun=$(fld 2 "$m"); mpend=$(fld 3 "$m")
         mrun=${mrun:-0}; mpend=${mpend:-0}
+        # USED is the live pool-wide count when the controller will report it (any
+        # QOS you hold a job in, running or queued); otherwise ~your-own only.
+        used_disp=$([ -n "$pu" ] && echo "${poolused:-0}" || echo "~${used:-0}")
 
 
         # shellcheck disable=SC2059
         printf "$POOL_ROW" \
                "${acct}${def}" "$qos" "${prio:--}" \
                "$([ "$pre" = off ] && echo no || echo "${pre:-?}")" \
-               "${cap:--}" "${used:-0}" "${wait:-0}" \
+               "${cap:--}" "$used_disp" "${wait:-0}" \
                "$([ "$mrun" = 0 ] && echo '-' || echo "$mrun")" \
                "$([ "$mpend" = 0 ] && echo '-' || echo "$mpend")"
 
@@ -1354,12 +1376,13 @@ cmd_pools() {
     best=$(best_pool 2>/dev/null || true)
     [ -n "$best" ] &&
         say "  Naming no pool gets you ${best%%|*}/${best#*|}, the best of these:"$'\n'"  highest priority first, then surviving preemption, then the larger quota."
-    say "  * = your default account. CAP is the whole pool's node quota, but this"
-    say "  scheduler lets you see only your OWN jobs, so USED/QUEUED/YOU count just"
-    say "  what is visible to you -- everyone else on the same QOS is hidden. A pool"
-    say "  can therefore be full (your submit pends on QOSGrpNodeLimit, idle-looking"
-    say "  nodes stay unreachable) while USED still reads 0. For who has actually been"
-    say "  using a pool lately, run '${SELF} top-users <account>'."
+    say "  * = your default account. CAP is the whole pool's node quota. USED is the"
+    say "  live pool-wide count when the controller will report it (any QOS you hold a"
+    say "  job in, running or queued); otherwise it shows ~your-own, because this"
+    say "  scheduler hides other users' jobs. A plain USED is everyone's; ~USED is only"
+    say "  yours, so a pool can be full (submit pends on QOSGrpNodeLimit, idle-looking"
+    say "  nodes unreachable) even when ~USED looks low. QUEUED/YOU are always yours."
+    say "  For who has been using a pool lately, run '${SELF} top-users <account>'."
     say "  PREEMPT describes policy, not a reservation or guarantee against cancellation."
 }
 
@@ -1367,11 +1390,11 @@ cmd_pools() {
 # terminals; consumers should use this command instead of scraping its spacing
 # and narrative lines.
 cmd_pools_json() {
-    local facts usage mine defs selfuse all owned trun tpend tnodes best
-    local acct qos assoc def f u m prio pre wall cap cappu used wait mrun mpend
+    local facts usage mine defs selfuse all owned trun tpend tnodes best poolusage
+    local acct qos assoc def f u m prio pre wall cap cappu used wait mrun mpend pu poolused
     local first=1
     facts=$(qos_facts); usage=$(pool_usage); mine=$(my_qos_pairs)
-    defs=$(my_pools); selfuse=$(my_usage)
+    defs=$(my_pools); selfuse=$(my_usage); poolusage=$(qos_pool_usage)
     [ -n "$mine" ] || die "no associations found for ${ME}"
     all=$(spur accounts show account 2>/dev/null | tail -n +3 | grep -c . || true)
     owned=$(printf '%s\n' "$mine" | cut -d'|' -f1 | sort -u | grep -c . || true)
@@ -1411,9 +1434,10 @@ cmd_pools_json() {
         assoc=$(printf '%s\n' "$defs" | awk -F'|' -v a="$acct" '$1==a {print; exit}')
         def=$(fld 2 "$assoc")
         f=$(pick "$qos" "$facts"); u=$(pick "$qos" "$usage"); m=$(pick "$qos" "$selfuse")
+        pu=$(pick "$qos" "$poolusage")
         prio=$(fld 2 "$f"); pre=$(fld 3 "$f"); wall=$(fld 4 "$f")
         cap=$(fld 7 "$f"); cappu=$(fld 8 "$f")
-        used=$(fld 2 "$u"); wait=$(fld 3 "$u")
+        used=$(fld 2 "$u"); wait=$(fld 3 "$u"); poolused=$(fld 3 "$pu")
         mrun=$(fld 2 "$m"); mpend=$(fld 3 "$m")
         [ "$first" = 1 ] || printf ','
         first=0
@@ -1429,6 +1453,8 @@ cmd_pools_json() {
         printf ',"nodeCap":'; json_number_or_null "$cap"
         printf ',"nodeCapPerUser":'; json_number_or_null "$cappu"
         printf ',"usedNodes":'; json_number_or_null "${used:-0}"
+        printf ',"poolUsedNodes":'
+        if [ -n "$pu" ]; then json_number_or_null "${poolused:-0}"; else printf 'null'; fi
         printf ',"queuedJobs":'; json_number_or_null "${wait:-0}"
         printf ',"userRunning":'; json_number_or_null "${mrun:-0}"
         printf ',"userPending":'; json_number_or_null "${mpend:-0}"

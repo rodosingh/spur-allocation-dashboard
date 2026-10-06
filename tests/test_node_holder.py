@@ -60,12 +60,18 @@ elif name=='sbatch':
 elif name=='scancel':
  if (p/'cancel_fail').exists(): print('mock refusal',file=sys.stderr);sys.exit(1)
  jobs=[j for j in jobs if str(j['id']) not in a];save()
+elif name=='scontrol':
+ if a[:2]==['show','assoc_mgr'] and not (p/'assoc_fail').exists():
+  print('QOS Records')
+  print('QOS=high-qos MaxWall=1-00:00:00 MaxJobsPU=N MaxSubmitJobsPU=N MaxTRESPU=N')
+  print('   GrpJobs=N(2) GrpSubmitJobs=N(3) GrpTRES=cpu=N(100),gres/gpu=N(16),node=5(2)')
+  print('   User=tester MaxJobsPU=N(0) MaxSubmitJobsPU=N(1) MaxTRESPU=')
 '''
 class TestCLI(unittest.TestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory(prefix='nodeholder-test-');self.p=pathlib.Path(self.tmp.name)
   (self.p/'jobs.json').write_text('[]'); (self.p/'bin').mkdir()
-  for n in ['id','getent','crontab','squeue','sbatch','scancel','spur','sinfo']:
+  for n in ['id','getent','crontab','squeue','sbatch','scancel','spur','sinfo','scontrol']:
    f=self.p/'bin'/n;f.write_text(MOCK);f.chmod(0o755)
   self.env=dict(os.environ,MOCK_ROOT=str(self.p),PATH=str(self.p/'bin')+':'+os.environ['PATH'],NODEHOLD_DIR=str(self.p/'state'),NODEHOLD_NAME='hold',SPUR_CONTROLLER_ADDR='mock',NODEHOLD_CHAIN='2',NODEHOLD_HEADROOM_MB='0')
  def tearDown(self): self.tmp.cleanup()
@@ -151,6 +157,16 @@ class TestCLI(unittest.TestCase):
  def test_top_users_requires_an_account(self):
   r=self.runcli('top-users-json',ok=False)
   self.assertIn('needs an account',r.stdout+r.stderr)
+ def test_pools_json_reports_pool_wide_usage_when_known(self):
+  pools={p['qos']:p for p in json.loads(self.runcli('pools-json').stdout)['pools']}
+  self.assertEqual(pools['high-qos']['poolUsedNodes'],2)   # assoc_mgr node=5(2) -> 2 pool-wide
+  self.assertIsNone(pools['low-qos']['poolUsedNodes'])     # absent from assoc_mgr -> unknown, not 0
+ def test_pools_json_pool_usage_unknown_when_controller_is_silent(self):
+  (self.p/'assoc_fail').touch()
+  pools={p['qos']:p for p in json.loads(self.runcli('pools-json').stdout)['pools']}
+  self.assertTrue(all(p['poolUsedNodes'] is None for p in pools.values()))
+ def test_pools_human_marks_self_only_usage_with_tilde(self):
+  self.assertIn('~', self.runcli('pools').stdout)  # a pool with no live reading shows ~your-own
  def test_topup_rechecks_policy(self):
   self.start('-q','high-qos');j=self.jobs();j[0].update(state='RUNNING',node='node026');(self.p/'jobs.json').write_text(json.dumps(j))
   (self.p/'downgrade').touch()

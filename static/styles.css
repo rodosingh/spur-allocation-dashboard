@@ -1043,6 +1043,10 @@ tr.mine {
   background: var(--red);
 }
 
+.muted {
+  color: var(--muted, #8a8a8a);
+}
+
 .top-users-panel {
   margin-top: 14px;
 }
