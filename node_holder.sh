@@ -1523,6 +1523,77 @@ cmd_top_users() {
     done <<< "$rows"
 }
 
+# --- seats (probe a pool you hold no job in) --------------------------------
+# A held job (sbatch --hold) sits PENDING forever and allocates nothing, yet it
+# is enough for the controller to list its QOS in assoc_mgr. So to read a pool
+# you have no job in, submit one held dummy, read the live usage, cancel it.
+# Submit a held, never-starting 1-node job and echo its id. Held jobs allocate
+# no nodes, so this never consumes a seat.
+seat_probe() {
+    local account=$1 qos=$2 jid
+    jid=$(sbatch --hold --parsable -J "${PREFIX}-seatprobe" -p "$PARTITION" \
+          -A "$account" -q "$qos" -N 1 -t 00:01:00 --wrap 'true' 2>/dev/null)
+    case "$jid" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s\n' "$jid"
+}
+
+# "cap|used|probed" for one pool. If assoc_mgr already lists the QOS (you hold a
+# job there) it is read directly; otherwise a held dummy is submitted, read, and
+# cancelled. The cancel is trapped so a held job never survives this function.
+seat_lookup() {
+    local account=$1 qos=$2 row jid probed=0
+    row=$(pick "$qos" "$(qos_pool_usage)")
+    if [ -z "$row" ]; then
+        jid=$(seat_probe "$account" "$qos") || jid=""
+        if [ -n "$jid" ]; then
+            probed=1
+            trap 'scancel "$jid" >/dev/null 2>&1 || true' EXIT INT TERM
+            sleep "${NODEHOLD_PROBE_WAIT:-2}"
+            row=$(pick "$qos" "$(qos_pool_usage)") || true
+            scancel "$jid" >/dev/null 2>&1 || true
+            trap - EXIT INT TERM
+        fi
+    fi
+    printf '%s|%s|%s\n' "$(fld 2 "$row")" "$(fld 3 "$row")" "$probed"
+}
+
+cmd_seats_json() {
+    local account=${1:-} qos=${2:-} info cap used probed free
+    [ -n "$account" ] && [ -n "$qos" ] || die "seats-json needs an account and a qos, e.g. '${SELF} seats-json amd-hyperloom-geak amd-hyperloom-geak-qos'"
+    info=$(seat_lookup "$account" "$qos")
+    cap=$(fld 1 "$info"); used=$(fld 2 "$info"); probed=$(fld 3 "$info")
+    printf '{"schemaVersion":1,"account":'; json_quote "$account"
+    printf ',"qos":'; json_quote "$qos"
+    printf ',"probed":%s' "$([ "$probed" = 1 ] && echo true || echo false)"
+    printf ',"known":%s' "$([ -n "$used" ] && echo true || echo false)"
+    printf ',"nodeCap":'; json_number_or_null "$cap"
+    printf ',"usedNodes":'; json_number_or_null "$used"
+    printf ',"free":'
+    if [ -n "$cap" ] && [ -n "$used" ] && case "$cap$used" in *[!0-9]*) false;; *) true;; esac; then
+        free=$(( cap - used )); [ "$free" -lt 0 ] && free=0; printf '%s' "$free"
+    else
+        printf 'null'
+    fi
+    printf '}\n'
+}
+
+cmd_seats() {
+    local account=${1:-} qos=${2:-} info cap used probed free
+    [ -n "$account" ] && [ -n "$qos" ] || die "seats needs an account and a qos, e.g. '${SELF} seats amd-hyperloom-geak amd-hyperloom-geak-qos'"
+    info=$(seat_lookup "$account" "$qos")
+    cap=$(fld 1 "$info"); used=$(fld 2 "$info"); probed=$(fld 3 "$info")
+    [ "$probed" = 1 ] && say "probed ${account}/${qos} with a held dummy job (submitted, read, cancelled)"
+    if [ -z "$used" ]; then
+        say "${qos}: could not read live usage (no job here, and the probe did not land -- submit limit or a busy controller)"
+        return 0
+    fi
+    case "$cap" in
+        ''|*[!0-9]*) say "${qos}: ${used} node(s) in use pool-wide, no node cap" ;;
+        *) free=$(( cap - used )); [ "$free" -lt 0 ] && free=0
+           say "${qos}: ${used} / ${cap} node(s) in use pool-wide -- ${free} free" ;;
+    esac
+}
+
 show_one() {
     local rows run node
     load_profile
@@ -2564,6 +2635,10 @@ node_holder.sh -- keep ${PARTITION} GPU nodes across a chain of batch jobs
                    the only way to see past your own jobs when squeue hides them
   top-users-json <acct>
                    that same per-user usage as stable JSON for dashboards
+  seats <acct> <qos>  live used/cap/free for a pool; if you hold no job there it
+                   probes with a held throwaway job (submitted, read, cancelled)
+  seats-json <acct> <qos>
+                   that same reading as stable JSON for dashboards
   adopt <jobid>    chain behind a job you already hold, keeping its node
   status           show every chain, its node and remaining runway
   status-json      status as stable JSON for dashboards and other tools
@@ -2753,6 +2828,8 @@ case "${1:-}" in
     pools-json) shift; cmd_pools_json "$@" ;;
     top-users) shift; cmd_top_users "$@" ;;
     top-users-json) shift; cmd_top_users_json "$@" ;;
+    seats) shift; cmd_seats "$@" ;;
+    seats-json) shift; cmd_seats_json "$@" ;;
     race)   shift; cmd_race   "$@" ;;
     arm)    shift; cmd_arm    "$@" ;;
     clear)  shift; cmd_clear  "$@" ;;

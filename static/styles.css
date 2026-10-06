@@ -1047,6 +1047,27 @@ tr.mine {
   color: var(--muted, #8a8a8a);
 }
 
+.seat-check {
+  margin-left: 8px;
+  font-size: 0.72rem;
+  padding: 1px 8px;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted, #8a8a8a);
+}
+
+.seat-check:hover:not(:disabled) {
+  color: var(--fg, #fff);
+  border-color: var(--muted, #8a8a8a);
+}
+
+.seat-check:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .top-users-panel {
   margin-top: 14px;
 }

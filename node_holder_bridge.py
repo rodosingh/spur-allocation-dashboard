@@ -92,6 +92,31 @@ def get_top_users(account: str) -> dict[str, Any]:
     return payload
 
 
+def get_pool_seats(account: str, qos: str) -> dict[str, Any]:
+    """Live used/cap/free for one pool, probing with a held dummy if needed.
+
+    Mutating: node_holder may briefly submit and cancel one held job so the
+    controller will report a pool you hold no job in. account and qos are
+    validated and passed as argv elements, never a shell string.
+    """
+    if not ACCOUNT_RE.fullmatch(account):
+        raise ValueError("invalid account name")
+    if not ACCOUNT_RE.fullmatch(qos):
+        raise ValueError("invalid qos name")
+    output = scheduler.run_command(
+        [str(NODE_HOLDER), "seats-json", account, qos],
+        timeout=90,
+        env=_environment(),
+    )
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise BridgeError(f"seats-json returned invalid JSON: {error}") from error
+    if not isinstance(payload, dict):
+        raise BridgeError("seats-json did not return an object")
+    return payload
+
+
 def _active_managed_names(jobs: list[dict[str, Any]]) -> list[str]:
     """Find active node_holder names without assuming one naming prefix."""
     active = {

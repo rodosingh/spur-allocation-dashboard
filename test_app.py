@@ -345,6 +345,37 @@ class HandlerTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("invalid account", payload["error"])
 
+    def test_pool_seats_endpoint_probes_and_returns(self):
+        fake = {
+            "schemaVersion": 1,
+            "account": "amd-brain-models",
+            "qos": "amd-brain-models-qos",
+            "probed": True,
+            "known": True,
+            "nodeCap": 8,
+            "usedNodes": 8,
+            "free": 0,
+        }
+        with patch.object(holder, "get_pool_seats", return_value=fake) as spy:
+            status, payload = self.request(
+                "POST",
+                "/api/pool-seats",
+                {"account": "amd-brain-models", "qos": "amd-brain-models-qos"},
+                token="live-token",
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["free"], 0)
+        self.assertIn("updatedAt", payload)
+        spy.assert_called_once_with("amd-brain-models", "amd-brain-models-qos")
+
+    def test_pool_seats_requires_token_before_probing(self):
+        with patch.object(holder, "get_pool_seats") as spy:
+            status, payload = self.request(
+                "POST", "/api/pool-seats", {"account": "a", "qos": "q"}, token="stale"
+            )
+        self.assertEqual(status, 403)
+        spy.assert_not_called()
+
     def test_mutation_requires_token_before_calling_backend(self):
         with patch.object(app, "create_request") as create:
             status, payload = self.request(

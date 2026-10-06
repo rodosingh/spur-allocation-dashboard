@@ -178,9 +178,11 @@ Two people on one login host must each pick a distinct `--port`.
   for any QoS you hold a job in — running *or queued* — read from the controller's
   association manager (`scontrol show assoc_mgr`), the one source that sees past
   your own jobs. For a pool you have no job in it shows `? / cap` (usage
-  unknown), because this scheduler hides other users' jobs from `squeue`. Expand a row for
-  your jobs in that QoS plus a **recent top users** panel (from `sreport`) showing
-  who has been using the pool.
+  unknown), because this scheduler hides other users' jobs from `squeue`; a
+  **check seats** button next to it probes the live total on demand by briefly
+  submitting a *held* throwaway job (which allocates nothing), reading the
+  controller, and cancelling it. Expand a row for your jobs in that QoS plus a
+  **recent top users** panel (from `sreport`) showing who has been using the pool.
 - **SQ** — the dashboard equivalent of the personal `sq` alias.
 - **SQA** — all cluster jobs with text/state filters. This expensive view loads
   only when opened or manually refreshed.
@@ -269,6 +271,7 @@ Mutating:
 - `POST /api/requests`
 - `POST /api/jobs/cancel`
 - `POST /api/chains/action`
+- `POST /api/pool-seats` (briefly submits and cancels a held probe job to read a pool's live usage)
 
 Mutations require the current CSRF token and a loopback browser origin.
 

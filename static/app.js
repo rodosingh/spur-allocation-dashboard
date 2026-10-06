@@ -10,6 +10,8 @@ const state = {
   expandedPools: new Set(),
   topUsers: {},
   topUsersLoading: new Set(),
+  poolSeats: {},
+  poolSeatsLoading: new Set(),
   refreshing: false,
   messageTimer: null,
   confirmResolve: null,
@@ -777,6 +779,25 @@ async function loadTopUsers(account) {
   }
 }
 
+async function checkSeats(pool) {
+  const key = pool.qos;
+  if (state.poolSeatsLoading.has(key)) return;
+  state.poolSeatsLoading.add(key);
+  renderPools();
+  try {
+    state.poolSeats[key] = await postJson("/api/pool-seats", {
+      account: pool.account,
+      qos: pool.qos,
+    });
+  } catch (error) {
+    state.poolSeats[key] = { known: false };
+    showMessage(`Seat probe failed: ${error.message || error}`, true);
+  } finally {
+    state.poolSeatsLoading.delete(key);
+    renderPools();
+  }
+}
+
 function renderPools() {
   const body = $("#pool-rows");
   body.replaceChildren();
@@ -786,33 +807,51 @@ function renderPools() {
     row.tabIndex = 0;
     row.setAttribute("role", "button");
     row.setAttribute("aria-expanded", String(state.expandedPools.has(key)));
-    const poolKnown = pool.poolUsedNodes != null && pool.nodeCap != null;
+    const probe = state.poolSeats[pool.qos];
+    const probeLoading = state.poolSeatsLoading.has(pool.qos);
+    const effUsed =
+      pool.poolUsedNodes != null ? pool.poolUsedNodes : probe && probe.known ? probe.usedNodes : null;
+    const effCap = pool.nodeCap != null ? pool.nodeCap : probe && probe.known ? probe.nodeCap : null;
+    const seatsKnown = effUsed != null && effCap != null;
     const usageCell = element("div");
     let usageLabel;
     let usageTip;
-    if (poolKnown) {
-      const free = Math.max(0, pool.nodeCap - pool.poolUsedNodes);
-      usageLabel = `${pool.poolUsedNodes} / ${pool.nodeCap} · ${free} free`;
+    if (seatsKnown) {
+      const free = Math.max(0, effCap - effUsed);
+      usageLabel = `${effUsed} / ${effCap} · ${free} free`;
       usageTip =
-        `Live pool-wide usage from the controller: ${pool.poolUsedNodes} of ${pool.nodeCap} ` +
-        `nodes in use across all users, ${free} free. Readable because you hold a job in this QoS.`;
+        pool.poolUsedNodes != null
+          ? `Live pool-wide usage from the controller: ${effUsed} of ${effCap} nodes in use across all users, ${free} free. Readable because you hold a job in this QoS.`
+          : `Probed with a held throwaway job: ${effUsed} of ${effCap} nodes in use across all users, ${free} free.`;
     } else {
       usageLabel = `? / ${pool.nodeCap ?? "∞"}`;
       usageTip =
-        `Pool-wide usage is unknown here — this cluster only reveals it for a QoS you hold a job ` +
-        `in (running or queued). You currently hold ${pool.usedNodes} node(s) here. Submit a job, ` +
-        `or expand the row to see recent top users.`;
+        `Pool-wide usage is unknown here — this cluster only reveals it for a QoS you hold a job in. ` +
+        `You currently hold ${pool.usedNodes} node(s) here. Use "check seats" to probe it with a held throwaway job.`;
     }
-    const usageText = element("span", poolKnown ? "" : "muted", usageLabel);
+    const usageText = element("span", seatsKnown ? "" : "muted", usageLabel);
     usageText.title = usageTip;
     usageCell.append(usageText);
-    if (poolKnown) {
-      const usage = pool.nodeCap ? Math.min(100, Math.round((pool.poolUsedNodes / pool.nodeCap) * 100)) : 0;
+    if (seatsKnown) {
+      const usage = effCap ? Math.min(100, Math.round((effUsed / effCap) * 100)) : 0;
       const bar = element("div", "usage-bar");
       const fill = element("i", usage >= 100 ? "full" : usage >= 80 ? "warning" : "");
       fill.style.width = `${usage}%`;
       bar.append(fill);
       usageCell.append(bar);
+    } else {
+      const btn = element(
+        "button",
+        "seat-check",
+        probeLoading ? "checking…" : probe && !probe.known ? "retry seats" : "check seats",
+      );
+      btn.disabled = probeLoading;
+      btn.title = "Submit a held throwaway job to read this pool's live used/cap across all users, then cancel it.";
+      btn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        checkSeats(pool);
+      });
+      usageCell.append(btn);
     }
     row.append(
       cell(primaryCell(pool.account, pool.defaultQos ? "association default" : ""), "primary-cell"),

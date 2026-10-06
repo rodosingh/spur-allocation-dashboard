@@ -66,6 +66,13 @@ elif name=='scontrol':
   print('QOS=high-qos MaxWall=1-00:00:00 MaxJobsPU=N MaxSubmitJobsPU=N MaxTRESPU=N')
   print('   GrpJobs=N(2) GrpSubmitJobs=N(3) GrpTRES=cpu=N(100),gres/gpu=N(16),node=5(2)')
   print('   User=tester MaxJobsPU=N(0) MaxSubmitJobsPU=N(1) MaxTRESPU=')
+  seen={'high-qos'}
+  for j in jobs:  # like real assoc_mgr: a QOS becomes readable once you hold a job in it
+   q=j.get('qos')
+   if q and q not in seen:
+    print(f'QOS={q} MaxWall=1-00:00:00 MaxJobsPU=N MaxSubmitJobsPU=N MaxTRESPU=N')
+    print('   GrpJobs=N(1) GrpSubmitJobs=N(1) GrpTRES=cpu=N(50),node=7(3)')
+    seen.add(q)
 '''
 class TestCLI(unittest.TestCase):
  def setUp(self):
@@ -73,7 +80,7 @@ class TestCLI(unittest.TestCase):
   (self.p/'jobs.json').write_text('[]'); (self.p/'bin').mkdir()
   for n in ['id','getent','crontab','squeue','sbatch','scancel','spur','sinfo','scontrol']:
    f=self.p/'bin'/n;f.write_text(MOCK);f.chmod(0o755)
-  self.env=dict(os.environ,MOCK_ROOT=str(self.p),PATH=str(self.p/'bin')+':'+os.environ['PATH'],NODEHOLD_DIR=str(self.p/'state'),NODEHOLD_NAME='hold',SPUR_CONTROLLER_ADDR='mock',NODEHOLD_CHAIN='2',NODEHOLD_HEADROOM_MB='0')
+  self.env=dict(os.environ,MOCK_ROOT=str(self.p),PATH=str(self.p/'bin')+':'+os.environ['PATH'],NODEHOLD_DIR=str(self.p/'state'),NODEHOLD_NAME='hold',SPUR_CONTROLLER_ADDR='mock',NODEHOLD_CHAIN='2',NODEHOLD_HEADROOM_MB='0',NODEHOLD_PROBE_WAIT='0')
  def tearDown(self): self.tmp.cleanup()
  def runcli(self,*args,ok=True,env=None):
   r=subprocess.run(['bash',SCRIPT,*args],env=env or self.env,text=True,capture_output=True,timeout=15)
@@ -167,6 +174,16 @@ class TestCLI(unittest.TestCase):
   self.assertTrue(all(p['poolUsedNodes'] is None for p in pools.values()))
  def test_pools_human_marks_self_only_usage_with_tilde(self):
   self.assertIn('~', self.runcli('pools').stdout)  # a pool with no live reading shows ~your-own
+ def test_seats_reads_without_probe_when_already_visible(self):
+  d=json.loads(self.runcli('seats-json','amd-test','high-qos').stdout)
+  self.assertFalse(d['probed'])  # high-qos already in assoc_mgr -> read directly
+  self.assertEqual((d['nodeCap'],d['usedNodes'],d['free']),(5,2,3))
+  self.assertEqual(self.jobs(),[])  # nothing submitted
+ def test_seats_probes_hidden_pool_then_cancels(self):
+  d=json.loads(self.runcli('seats-json','amd-test','low-qos').stdout)
+  self.assertTrue(d['probed'])  # not visible -> held dummy submitted
+  self.assertEqual((d['nodeCap'],d['usedNodes'],d['free']),(7,3,4))
+  self.assertEqual(self.jobs(),[])  # held dummy was cancelled -> queue clean
  def test_topup_rechecks_policy(self):
   self.start('-q','high-qos');j=self.jobs();j[0].update(state='RUNNING',node='node026');(self.p/'jobs.json').write_text(json.dumps(j))
   (self.p/'downgrade').touch()

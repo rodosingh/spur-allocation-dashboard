@@ -128,6 +128,14 @@ def build_top_users(account: str) -> dict[str, Any]:
     return data
 
 
+def probe_pool_seats(payload: dict[str, Any]) -> dict[str, Any]:
+    account = str(payload.get("account", ""))
+    qos = str(payload.get("qos", ""))
+    data = holder.get_pool_seats(account, qos)
+    data["updatedAt"] = utc_now()
+    return data
+
+
 def build_history() -> dict[str, Any]:
     history_error = None
     try:
@@ -314,6 +322,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 HTTPStatus.OK,
             ),
             "/api/chains/action": (run_chain_action, HTTPStatus.OK),
+            "/api/pool-seats": (probe_pool_seats, HTTPStatus.OK),
         }
         route = routes.get(urlparse(self.path).path)
         if not route:
