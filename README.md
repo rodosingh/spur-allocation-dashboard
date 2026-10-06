@@ -177,8 +177,8 @@ Two people on one login host must each pick a distinct `--port`.
   submit limits. Usage shows the **live pool-wide** count (`used / cap · N free`)
   for any QoS you hold a job in — running *or queued* — read from the controller's
   association manager (`scontrol show assoc_mgr`), the one source that sees past
-  your own jobs. For a pool you have no job in it falls back to `you: N/cap`,
-  because this scheduler hides other users' jobs from `squeue`. Expand a row for
+  your own jobs. For a pool you have no job in it shows `? / cap` (usage
+  unknown), because this scheduler hides other users' jobs from `squeue`. Expand a row for
   your jobs in that QoS plus a **recent top users** panel (from `sreport`) showing
   who has been using the pool.
 - **SQ** — the dashboard equivalent of the personal `sq` alias.

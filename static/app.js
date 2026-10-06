@@ -787,8 +787,6 @@ function renderPools() {
     row.setAttribute("role", "button");
     row.setAttribute("aria-expanded", String(state.expandedPools.has(key)));
     const poolKnown = pool.poolUsedNodes != null && pool.nodeCap != null;
-    const usedForBar = poolKnown ? pool.poolUsedNodes : pool.usedNodes;
-    const usage = pool.nodeCap ? Math.min(100, Math.round((usedForBar / pool.nodeCap) * 100)) : 0;
     const usageCell = element("div");
     let usageLabel;
     let usageTip;
@@ -799,19 +797,23 @@ function renderPools() {
         `Live pool-wide usage from the controller: ${pool.poolUsedNodes} of ${pool.nodeCap} ` +
         `nodes in use across all users, ${free} free. Readable because you hold a job in this QoS.`;
     } else {
-      usageLabel = `you: ${pool.usedNodes} / ${pool.nodeCap ?? "∞"}`;
+      usageLabel = `? / ${pool.nodeCap ?? "∞"}`;
       usageTip =
-        "Only your own jobs — pool-wide usage isn't readable unless you hold a job in this QoS " +
-        "(this cluster hides other users' jobs). Submit one, or expand the row to see recent top users.";
+        `Pool-wide usage is unknown here — this cluster only reveals it for a QoS you hold a job ` +
+        `in (running or queued). You currently hold ${pool.usedNodes} node(s) here. Submit a job, ` +
+        `or expand the row to see recent top users.`;
     }
     const usageText = element("span", poolKnown ? "" : "muted", usageLabel);
     usageText.title = usageTip;
     usageCell.append(usageText);
-    const bar = element("div", "usage-bar");
-    const fill = element("i", usage >= 100 ? "full" : usage >= 80 ? "warning" : "");
-    fill.style.width = `${usage}%`;
-    bar.append(fill);
-    usageCell.append(bar);
+    if (poolKnown) {
+      const usage = pool.nodeCap ? Math.min(100, Math.round((pool.poolUsedNodes / pool.nodeCap) * 100)) : 0;
+      const bar = element("div", "usage-bar");
+      const fill = element("i", usage >= 100 ? "full" : usage >= 80 ? "warning" : "");
+      fill.style.width = `${usage}%`;
+      bar.append(fill);
+      usageCell.append(bar);
+    }
     row.append(
       cell(primaryCell(pool.account, pool.defaultQos ? "association default" : ""), "primary-cell"),
       cell(pool.qos),
