@@ -15,7 +15,7 @@
 # ----------------------------------------------------------------------------
 #  1. QUICK START
 # ----------------------------------------------------------------------------
-#  Run from /home/aditysin/SCRIPTS on a configured login host.
+#  Run from your checkout on a configured login host (anywhere under $HOME works).
 #
 #    export NODEHOLD_NAME=hold       # use existing hold-* names
 #    ./node_holder.sh pools         # check current access and limits
