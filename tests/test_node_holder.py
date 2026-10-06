@@ -80,7 +80,7 @@ class TestCLI(unittest.TestCase):
   (self.p/'jobs.json').write_text('[]'); (self.p/'bin').mkdir()
   for n in ['id','getent','crontab','squeue','sbatch','scancel','spur','sinfo','scontrol']:
    f=self.p/'bin'/n;f.write_text(MOCK);f.chmod(0o755)
-  self.env=dict(os.environ,MOCK_ROOT=str(self.p),PATH=str(self.p/'bin')+':'+os.environ['PATH'],NODEHOLD_DIR=str(self.p/'state'),NODEHOLD_NAME='hold',SPUR_CONTROLLER_ADDR='mock',NODEHOLD_CHAIN='2',NODEHOLD_HEADROOM_MB='0',NODEHOLD_PROBE_WAIT='0')
+  self.env=dict(os.environ,MOCK_ROOT=str(self.p),PATH=str(self.p/'bin')+':'+os.environ['PATH'],NODEHOLD_DIR=str(self.p/'state'),NODEHOLD_NAME='hold',SPUR_CONTROLLER_ADDR='mock',NODEHOLD_CHAIN='2',NODEHOLD_HEADROOM_MB='0',NODEHOLD_PROBE_WAIT='0',NODEHOLD_PROBE_SEATS='0')
  def tearDown(self): self.tmp.cleanup()
  def runcli(self,*args,ok=True,env=None):
   r=subprocess.run(['bash',SCRIPT,*args],env=env or self.env,text=True,capture_output=True,timeout=15)
@@ -184,6 +184,11 @@ class TestCLI(unittest.TestCase):
   self.assertTrue(d['probed'])  # not visible -> held dummy submitted
   self.assertEqual((d['nodeCap'],d['usedNodes'],d['free']),(7,3,4))
   self.assertEqual(self.jobs(),[])  # held dummy was cancelled -> queue clean
+ def test_pools_auto_probes_unknown_pools_then_cleans_up(self):
+  out=self.runcli('pools',env=dict(self.env,NODEHOLD_PROBE_SEATS='1')).stdout
+  row=next(l for l in out.splitlines() if 'low-qos' in l and 'amd-test' in l)
+  self.assertEqual(row.split()[5],'3')  # USED filled pool-wide (node=7(3) -> 3 used), not ~0
+  self.assertEqual(self.jobs(),[])       # every probe was cancelled
  def test_topup_rechecks_policy(self):
   self.start('-q','high-qos');j=self.jobs();j[0].update(state='RUNNING',node='node026');(self.p/'jobs.json').write_text(json.dumps(j))
   (self.p/'downgrade').touch()

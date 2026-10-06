@@ -1322,6 +1322,9 @@ cmd_pools() {
     # association default, which used to hide amd-burst-qos under amd-hyperloom.
     facts=$(qos_facts); usage=$(pool_usage); mine=$(my_qos_pairs); defs=$(my_pools)
     poolusage=$(qos_pool_usage)
+    # Fill in pools you hold no job in by probing each with a held dummy (auto;
+    # they allocate nothing and are cancelled). Set NODEHOLD_PROBE_SEATS=0 to skip.
+    [ "${NODEHOLD_PROBE_SEATS:-1}" = 1 ] && poolusage=$(probe_all_pools "$mine" "$poolusage")
     local selfuse; selfuse=$(my_usage)
     [ -n "$mine" ] || die "no associations found for ${ME}"
 
@@ -1377,13 +1380,13 @@ cmd_pools() {
     [ -n "$best" ] &&
         say "  Naming no pool gets you ${best%%|*}/${best#*|}, the best of these:"$'\n'"  highest priority first, then surviving preemption, then the larger quota."
     say "  * = your default account. CAP is the whole pool's node quota. USED is the"
-    say "  live pool-wide count when the controller will report it (any QOS you hold a"
-    say "  job in, running or queued); otherwise it shows ~your-own, because this"
-    say "  scheduler hides other users' jobs. A plain USED is everyone's; ~USED is only"
-    say "  yours, so a pool can be full (submit pends on QOSGrpNodeLimit, idle-looking"
-    say "  nodes unreachable) even when ~USED looks low. QUEUED/YOU are always yours."
-    say "  For who has been using a pool lately, run '${SELF} top-users <account>'."
-    say "  PREEMPT describes policy, not a reservation or guarantee against cancellation."
+    say "  live pool-wide count across all users. For a QOS you hold no job in, it is"
+    say "  read by briefly floating a held probe job there (it allocates nothing and is"
+    say "  cancelled; set NODEHOLD_PROBE_SEATS=0 to skip). If a probe cannot land, USED"
+    say "  shows ~your-own instead. QUEUED/YOU are always just yours, so a pool can be"
+    say "  full (submit pends on QOSGrpNodeLimit, idle-looking nodes unreachable) even"
+    say "  when ~USED looks low. For who has been using a pool lately, run"
+    say "  '${SELF} top-users <account>'. PREEMPT describes policy, not a reservation."
 }
 
 # Stable machine-readable companion to `pools`. Keep the human table above for
@@ -1555,6 +1558,27 @@ seat_lookup() {
         fi
     fi
     printf '%s|%s|%s\n' "$(fld 2 "$row")" "$(fld 3 "$row")" "$probed"
+}
+
+# Given "account|qos" pairs and the usage already readable, float one held dummy
+# in every QOS not yet readable, wait once, re-read the fuller picture, then
+# cancel every probe. Held dummies allocate nothing and are always cancelled
+# (trapped), so this costs no seat. Echoes the augmented "qos|cap|used".
+probe_all_pools() {
+    local mine=$1 known=$2 acct qos jid jids="" done_qos=" "
+    while IFS='|' read -r acct qos; do
+        [ -n "$qos" ] || continue
+        case "$done_qos" in *" $qos "*) continue ;; esac   # one probe per distinct qos
+        done_qos="$done_qos$qos "
+        [ -n "$(pick "$qos" "$known")" ] && continue        # already readable
+        jid=$(seat_probe "$acct" "$qos") && jids="$jids $jid"
+    done <<< "$mine"
+    if [ -z "$jids" ]; then printf '%s\n' "$known"; return 0; fi
+    trap 'for jid in $jids; do scancel "$jid" >/dev/null 2>&1 || true; done' EXIT INT TERM
+    sleep "${NODEHOLD_PROBE_WAIT:-2}"
+    qos_pool_usage
+    for jid in $jids; do scancel "$jid" >/dev/null 2>&1 || true; done
+    trap - EXIT INT TERM
 }
 
 cmd_seats_json() {
