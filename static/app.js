@@ -12,6 +12,7 @@ const state = {
   topUsersLoading: new Set(),
   poolSeats: {},
   poolSeatsLoading: new Set(),
+  poolSeatsAutoFired: new Set(),
   refreshing: false,
   messageTimer: null,
   confirmResolve: null,
@@ -807,7 +808,7 @@ function renderPoolWide(pool) {
   return div;
 }
 
-async function checkSeats(pool) {
+async function checkSeats(pool, { silent = false } = {}) {
   const key = pool.qos;
   if (state.poolSeatsLoading.has(key)) return;
   state.poolSeatsLoading.add(key);
@@ -819,16 +820,31 @@ async function checkSeats(pool) {
     });
   } catch (error) {
     state.poolSeats[key] = { known: false };
-    showMessage(`Seat probe failed: ${error.message || error}`, true);
+    if (!silent) showMessage(`Seat probe failed: ${error.message || error}`, true);
   } finally {
     state.poolSeatsLoading.delete(key);
     renderPools();
   }
 }
 
+// When the Pools tab is open, quietly probe every pool you hold no job in so its
+// pool-wide used/queued fills in without a click. Each distinct QoS fires once
+// per visit (switchTab clears the guard), never on background polls, and probe
+// failures stay silent (the row keeps its "?" and a manual retry button).
+function autoProbePools() {
+  if (state.currentTab !== "pools") return;
+  for (const pool of state.pools?.pools || []) {
+    if (pool.poolUsedNodes != null) continue; // already live from the controller
+    if (state.poolSeatsAutoFired.has(pool.qos)) continue;
+    state.poolSeatsAutoFired.add(pool.qos);
+    setTimeout(() => checkSeats(pool, { silent: true }), 0);
+  }
+}
+
 function renderPools() {
   const body = $("#pool-rows");
   body.replaceChildren();
+  autoProbePools();
   for (const pool of state.pools?.pools || []) {
     const key = `${pool.account}|${pool.qos}`;
     const row = element("tr", `pool-row${state.expandedPools.has(key) ? " expanded" : ""}`);
@@ -1127,6 +1143,10 @@ function switchTab(name) {
   $$(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.dataset.panel === name));
   if (name === "sq") renderQueueTable("#sq-table", state.status?.jobs || [], true);
   if (name === "sqa") void loadSqa();
+  if (name === "pools") {
+    state.poolSeatsAutoFired.clear(); // re-probe unknown pools on each visit to Pools
+    renderPools();
+  }
   if (name === "history") void loadHistory();
   if (name === "diagnostics") void loadDiagnostics();
 }
