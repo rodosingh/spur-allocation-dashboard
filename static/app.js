@@ -873,10 +873,10 @@ function renderPools() {
           ? probe.poolQueuedJobs
           : null
       : null;
-    const queuedCell = element("span", seatsKnown ? "" : "muted", seatsKnown ? String(effQueued) : "…");
+    const queuedCell = element("span", seatsKnown ? "" : "muted", seatsKnown ? String(effQueued) : String(pool.userPending));
     queuedCell.title = seatsKnown
       ? `${effQueued} job(s) queued pool-wide across all users (${effRunning} running).`
-      : `Pool-wide queued is being read automatically. You have ${pool.userPending} queued.`;
+      : `Showing your own queued (${pool.userPending}). Pool-wide queued needs a submission probe (failing right now); it fills in when submissions recover.`;
     const usageCell = element("div");
     let usageLabel;
     let usageTip;
@@ -888,10 +888,10 @@ function renderPools() {
           ? `Live pool-wide usage from the controller: ${effUsed} of ${effCap} nodes in use across all users, ${free} free. Readable because you hold a job in this QoS.`
           : `Probed with a held throwaway job: ${effUsed} of ${effCap} nodes in use across all users, ${free} free.`;
     } else {
-      usageLabel = "…";
+      usageLabel = `${pool.usedNodes} / ${pool.nodeCap ?? "∞"}`;
       usageTip = probeLoading
-        ? "Reading pool-wide usage…"
-        : "Pool-wide usage pending — it auto-reads each time you open Pools. If it stays like this, cluster job submissions may be temporarily unavailable.";
+        ? "Reading live pool-wide usage…"
+        : `Showing your own usage (${pool.usedNodes} of the ${pool.nodeCap ?? "∞"}-node cap). Pool-wide needs a one-off submission probe, which is failing right now; it switches to the live pool-wide total the moment cluster submissions recover.`;
     }
     const usageText = element("span", seatsKnown ? "" : "muted", usageLabel);
     usageText.title = usageTip;
