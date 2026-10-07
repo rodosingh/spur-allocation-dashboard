@@ -50,6 +50,7 @@ elif name=='squeue':
   print(out)
 elif name=='sbatch':
  if (p/'fail_second').exists() and len(jobs)>0: sys.exit(1)
+ if (p/'sbatch_fail_once').exists() and not (p/'sbatch_failed_once').exists(): (p/'sbatch_failed_once').touch(); sys.exit(1)
  if (p/'slow_submit').exists():
   import time
   (p/'submitting').touch();time.sleep(0.5)
@@ -188,6 +189,11 @@ class TestCLI(unittest.TestCase):
   # GrpJobs=2, GrpSubmitJobs=6; our own probe dropped -> 5 submitted -> 5-2=3 queued
   self.assertEqual((d['poolRunningJobs'],d['poolQueuedJobs']),(2,3))
   self.assertEqual(self.jobs(),[])  # held dummy was cancelled -> queue clean
+ def test_seat_probe_retries_a_transient_sbatch_failure(self):
+  (self.p/'sbatch_fail_once').touch()  # first submit fails; retry must still land the probe
+  d=json.loads(self.runcli('seats-json','amd-test','low-qos').stdout)
+  self.assertTrue(d['known'])
+  self.assertEqual(self.jobs(),[])
  def test_pools_auto_probes_unknown_pools_then_cleans_up(self):
   out=self.runcli('pools',env=dict(self.env,NODEHOLD_PROBE_SEATS='1')).stdout
   row=next(l for l in out.splitlines() if 'low-qos' in l and 'amd-test' in l)

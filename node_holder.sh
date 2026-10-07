@@ -1557,11 +1557,16 @@ cmd_top_users() {
 # Submit a held, never-starting 1-node job and echo its id. Held jobs allocate
 # no nodes, so this never consumes a seat.
 seat_probe() {
-    local account=$1 qos=$2 jid
-    jid=$(sbatch --hold --parsable -J "${PREFIX}-seatprobe" -p "$PARTITION" \
-          -A "$account" -q "$qos" -N 1 -t 00:01:00 --wrap 'true' 2>/dev/null)
-    case "$jid" in ''|*[!0-9]*) return 1 ;; esac
-    printf '%s\n' "$jid"
+    local account=$1 qos=$2 jid i
+    # A submission can hit a transient controller/auth hiccup; one quick retry
+    # turns that spurious failure into a normal probe instead of an "unknown".
+    for i in 1 2; do
+        jid=$(sbatch --hold --parsable -J "${PREFIX}-seatprobe" -p "$PARTITION" \
+              -A "$account" -q "$qos" -N 1 -t 00:01:00 --wrap 'true' 2>/dev/null)
+        case "$jid" in ''|*[!0-9]*) [ "$i" = 2 ] || sleep "${NODEHOLD_PROBE_WAIT:-1}"; continue ;; esac
+        printf '%s\n' "$jid"; return 0
+    done
+    return 1
 }
 
 # "cap|used|probed" for one pool. If assoc_mgr already lists the QOS (you hold a

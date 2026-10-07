@@ -814,12 +814,14 @@ async function checkSeats(pool, { silent = false } = {}) {
   state.poolSeatsLoading.add(key);
   renderPools();
   try {
-    state.poolSeats[key] = await postJson("/api/pool-seats", {
+    const result = await postJson("/api/pool-seats", {
       account: pool.account,
       qos: pool.qos,
     });
+    // Only cache a real reading; on a failed/empty probe keep the last-known
+    // numbers (if any) rather than reverting the row to an unknown state.
+    if (result && result.known) state.poolSeats[key] = result;
   } catch (error) {
-    state.poolSeats[key] = { known: false };
     if (!silent) showMessage(`Seat probe failed: ${error.message || error}`, true);
   } finally {
     state.poolSeatsLoading.delete(key);
@@ -871,10 +873,10 @@ function renderPools() {
           ? probe.poolQueuedJobs
           : null
       : null;
-    const queuedCell = element("span", seatsKnown ? "" : "muted", seatsKnown ? String(effQueued) : "?");
+    const queuedCell = element("span", seatsKnown ? "" : "muted", seatsKnown ? String(effQueued) : "…");
     queuedCell.title = seatsKnown
       ? `${effQueued} job(s) queued pool-wide across all users (${effRunning} running).`
-      : `Pool-wide queued isn't known here until probed. You have ${pool.userPending} queued. Use "check seats".`;
+      : `Pool-wide queued is being read automatically. You have ${pool.userPending} queued.`;
     const usageCell = element("div");
     let usageLabel;
     let usageTip;
@@ -886,10 +888,10 @@ function renderPools() {
           ? `Live pool-wide usage from the controller: ${effUsed} of ${effCap} nodes in use across all users, ${free} free. Readable because you hold a job in this QoS.`
           : `Probed with a held throwaway job: ${effUsed} of ${effCap} nodes in use across all users, ${free} free.`;
     } else {
-      usageLabel = `? / ${pool.nodeCap ?? "∞"}`;
-      usageTip =
-        `Pool-wide usage is unknown here — this cluster only reveals it for a QoS you hold a job in. ` +
-        `You currently hold ${pool.usedNodes} node(s) here. Use "check seats" to probe it with a held throwaway job.`;
+      usageLabel = "…";
+      usageTip = probeLoading
+        ? "Reading pool-wide usage…"
+        : "Pool-wide usage pending — it auto-reads each time you open Pools. If it stays like this, cluster job submissions may be temporarily unavailable.";
     }
     const usageText = element("span", seatsKnown ? "" : "muted", usageLabel);
     usageText.title = usageTip;
@@ -901,19 +903,6 @@ function renderPools() {
       fill.style.width = `${usage}%`;
       bar.append(fill);
       usageCell.append(bar);
-    } else {
-      const btn = element(
-        "button",
-        "seat-check",
-        probeLoading ? "checking…" : probe && !probe.known ? "retry seats" : "check seats",
-      );
-      btn.disabled = probeLoading;
-      btn.title = "Submit a held throwaway job to read this pool's live used/cap across all users, then cancel it.";
-      btn.addEventListener("click", (event) => {
-        event.stopPropagation();
-        checkSeats(pool);
-      });
-      usageCell.append(btn);
     }
     row.append(
       cell(primaryCell(pool.account, pool.defaultQos ? "association default" : ""), "primary-cell"),
