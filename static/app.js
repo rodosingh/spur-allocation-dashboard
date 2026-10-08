@@ -1213,6 +1213,13 @@ function initialize() {
   updateRequestMode();
   void refreshCore();
   setInterval(refreshCore, 30_000);
+  // Keep probed pools (ones you hold no job in) near-live while viewing
+  // Pools: re-probe them on an interval so used/queued tracks the CLI.
+  setInterval(() => {
+    if (state.currentTab !== "pools") return;
+    state.poolSeatsAutoFired.clear();
+    renderPools();
+  }, 60_000);
 }
 
 globalThis.__spurDashboardTestApi = {
