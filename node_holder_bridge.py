@@ -339,19 +339,23 @@ def validate_request(
                     f"{qos} permits at most {max_submit} submitted jobs; "
                     f"chain depth can be at most {int(max_submit) - 1}"
                 )
+        missing = []
         if pool.get("preemptMode") == "cancel" and not payload.get(
             "acceptPreemption", False
         ):
-            raise ValueError(
-                f"{qos} cancels jobs when preempted; acknowledge preemption to submit"
-            )
+            missing.append("acknowledge preemption (it cancels running jobs)")
         priority = pool.get("priority")
         if priority is not None and int(priority) < MIN_PRIORITY and not payload.get(
             "anyQos", False
         ):
+            missing.append(
+                f"enable the priority-floor override (priority {priority} is below {MIN_PRIORITY})"
+            )
+        if missing:
             raise ValueError(
-                f"{qos} priority {priority} is below {MIN_PRIORITY}; "
-                "enable the safety override"
+                f"{qos} is low-priority and preemptible -- open Advanced and "
+                + " and ".join(missing)
+                + " to submit."
             )
 
     adopt_job_id = str(payload.get("adoptJobId", "")).strip()

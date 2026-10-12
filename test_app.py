@@ -75,8 +75,10 @@ class BridgeValidationTests(unittest.TestCase):
         burst = valid_payload(qos="amd-burst-qos", chainDepth=3)
         with self.assertRaisesRegex(ValueError, "acknowledge preemption"):
             holder.validate_request(burst, POOLS)
+        with self.assertRaisesRegex(ValueError, "priority-floor override"):
+            holder.validate_request(burst, POOLS)  # same message names BOTH at once
         burst["acceptPreemption"] = True
-        with self.assertRaisesRegex(ValueError, "safety override"):
+        with self.assertRaisesRegex(ValueError, "priority-floor override"):
             holder.validate_request(burst, POOLS)
         burst["anyQos"] = True
         request = holder.validate_request(burst, POOLS)
