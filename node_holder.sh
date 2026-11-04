@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  NODE HOLDER  |  GPU allocations on amd-spur
+#  NODE HOLDER  |  GPU allocations on amd-spur-v2
 # ============================================================================
 #  Request a node, maintain queued successors, and release the whole chain.
 #  One chain = one node allocation at a time. Handover is not guaranteed.
@@ -159,7 +159,7 @@
 #  ask landed beside someone else's 4-GPU job, which used the last four GPUs,
 #  so the second half could never fit until that job ended.
 #
-#    sinfo -N -p amd-spur -t idle -o '%N'          # find an empty node
+#    sinfo -N -p amd-spur-v2 -t idle -o '%N'          # find an empty node
 #    ./node_holder.sh -n half1 -q QOS -g 4 -w NODE --pair half2 start
 #    ./node_holder.sh -n half2 -q QOS -g 4 -w NODE --pair half1 start
 #
@@ -394,7 +394,7 @@ LOCK_DIR=${NODEHOLD_LOCK_DIR:-/tmp/nodeholder-$(id -un 2>/dev/null || echo "$USE
 mkdir -p "$LOCK_DIR" 2>/dev/null && [ -w "$LOCK_DIR" ] || LOCK_DIR=/tmp
 
 PREFIX=${NODEHOLD_NAME:-interactive}
-PARTITION=${NODEHOLD_PARTITION:-amd-spur}
+PARTITION=${NODEHOLD_PARTITION:-amd-spur-v2}
 # Empty means "work it out", which resolve_pool does by asking the scheduler
 # which pools this user holds and taking the best. This was hardcoded to
 # amd-burst until 2026-09-02, which put every new chain in the worst pool
@@ -447,7 +447,7 @@ ANY_QOS=${NODEHOLD_ANY_QOS:-0}
 WANT_NODES=${NODEHOLD_NODES:-1}
 
 # How long the hold should last, in seconds, as opposed to how long one link
-# lasts. Nothing on amd-spur may ask for more than a day at a time, so a hold
+# lasts. Nothing on amd-spur-v2 may ask for more than a day at a time, so a hold
 # measured in days is a matter of chain depth rather than wall clock: this is
 # turned into CHAIN by depth_for_hold once the per-link limit is known. 0 leaves
 # CHAIN alone.
@@ -1023,7 +1023,7 @@ my_preempt_mode() {
 }
 
 # The partition caps a job on top of whatever its QOS allows, and it is the easy
-# one to miss: amd-spur stops well short of some QOSes, which set no wall at all.
+# one to miss: amd-spur-v2 stops well short of some QOSes, which set no wall at all.
 # Over-asking is not a rejection -- the job waits on PartitionTimeLimit forever.
 partition_wall_min() {
     local t
@@ -1154,7 +1154,7 @@ trim_ask() {
     return 0
 }
 
-# Turn "hold it for four days" into a chain depth. Nothing on amd-spur may ask
+# Turn "hold it for four days" into a chain depth. Nothing on amd-spur-v2 may ask
 # for more than a day of wall clock at a time, so duration here is depth, not
 # --time. Sized so the QUEUED links alone cover the ask: the running head is
 # already part-spent when you ask, and the case this has to survive is cron
@@ -2244,17 +2244,9 @@ cmd_shell() {
     local jid node
     jid=$(fld 1 "$RUN_ROW"); node=$(fld 3 "$RUN_ROW")
 
-    if [ "$USE_TMUX" = 1 ]; then
-        # srun forwards TERM as-is, and tmux refuses to start under a dumb one.
-        local term=${TERM:-}
-        case "$term" in ''|dumb|unknown) term=xterm-256color ;; esac
-        say "attaching to the persistent session on ${node} (job ${jid}) -- detach with Ctrl-b d"
-        exec srun --jobid "$jid" --overlap --pty \
-             env TERM="$term" tmux -S "$TMUX_SOCK" new-session -A -s main -c "$HOME_DIR"
-    fi
-
-    say "opening a plain shell on ${node} (job ${jid}) -- this one does not survive a disconnect"
-    exec srun --jobid "$jid" --overlap --pty bash
+    say "opening repeatable private-SSH shell on ${node} (job ${jid})"
+    say "  holder tmux remains available with: tmux -S ${TMUX_SOCK} attach -t main"
+    exec /home/aditysin/.node_holder/private-node-shell.sh "$jid"
 }
 
 cmd_exec() {

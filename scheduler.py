@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-PARTITION = os.environ.get("SPUR_DASHBOARD_PARTITION", "amd-spur")
+PARTITION = os.environ.get("SPUR_DASHBOARD_PARTITION", "amd-spur-v2")
 # An empty username turns `squeue --user ""` into a confusing empty queue rather
 # than an error, so fall back to the password database.
 try:

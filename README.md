@@ -149,7 +149,7 @@ overridable:
 | `SPUR_DASHBOARD_NORMAL_PREFIX` | `interactive` | Prefix for normal one-off jobs (`interactive-<name>`) |
 | `NODEHOLD_MIN_PRIO` | `10000` | Priority floor, shared with `node_holder.sh` |
 | `SPUR_DASHBOARD_NODE_HOLDER` | `./node_holder.sh` | Path to a compatible script |
-| `SPUR_DASHBOARD_PARTITION` | `amd-spur` | Scheduler partition |
+| `SPUR_DASHBOARD_PARTITION` | `amd-spur-v2` | Scheduler partition |
 | `SPUR_DASHBOARD_STATE_DIR` | `~/.spur-dashboard` | Request history location |
 | `SPUR_DASHBOARD_READ_ONLY` | unset | `1` disables all mutations |
 
