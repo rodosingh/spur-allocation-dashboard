@@ -261,7 +261,7 @@ function updateRequestPreview() {
   // Race ignores the selected pool (it submits across several), so leave raced
   // chains unrestricted.
   if (pool.maxSubmitPerUser && mode === "chain" && strategy !== "race") {
-    const maxDepth = Math.max(0, pool.maxSubmitPerUser - 1);
+    const maxDepth = Math.min(64, Math.max(0, pool.maxSubmitPerUser - 1));
     $("#chain-depth").max = maxDepth;
     if (Number($("#chain-depth").value) > maxDepth) $("#chain-depth").value = String(maxDepth);
   } else {
