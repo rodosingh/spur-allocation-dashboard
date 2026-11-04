@@ -1,10 +1,15 @@
+import contextlib
+import errno
 import http.client
+import io
 import json
+import socket
+import sys
 import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import app
 import node_holder_bridge as holder
@@ -433,6 +438,146 @@ class HandlerTests(unittest.TestCase):
             )
         self.assertEqual(status, 400)
         self.assertIn("Unsupported", payload["error"])
+
+
+class PortResolutionTests(unittest.TestCase):
+    HOST = "127.0.0.1"
+
+    def _occupy(self):
+        """Bind+listen a throwaway socket to simulate a colleague holding a port."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((self.HOST, 0))
+        sock.listen()
+        self.addCleanup(sock.close)
+        return sock.getsockname()[1]
+
+    def _fake_servers(self, busy, assigned=54321):
+        """Patch ThreadingHTTPServer with a deterministic, in-memory stand-in.
+
+        Ports in ``busy`` raise EADDRINUSE; every other candidate (including 0,
+        which the OS would assign) returns a MagicMock whose ``server_address``
+        reports a concrete port. This makes ordering/fallback tests fully
+        deterministic without racing on real sockets.
+        """
+
+        def factory(address, _handler):
+            host, port = address
+            if port in busy:
+                raise OSError(errno.EADDRINUSE, "Address already in use")
+            server = MagicMock()
+            server.server_address = (host, assigned if port == 0 else port)
+            return server
+
+        mock = MagicMock(side_effect=factory)
+        patcher = patch.object(app, "ThreadingHTTPServer", mock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return mock
+
+    # --- deterministic (mocked) selection order ---
+
+    def test_bind_server_returns_preferred_when_it_is_free(self):
+        self._fake_servers(busy=set())
+        _server, port, moved = app.bind_server(self.HOST, 8876)
+        self.assertEqual(port, 8876)
+        self.assertFalse(moved)
+
+    def test_bind_server_scans_upward_past_busy_ports(self):
+        self._fake_servers(busy={8876, 8877})
+        _server, port, moved = app.bind_server(self.HOST, 8876)
+        self.assertEqual(port, 8878)
+        self.assertTrue(moved)
+
+    def test_bind_server_falls_back_to_ephemeral_when_scan_exhausted(self):
+        self._fake_servers(busy={8876, 8877, 8878}, assigned=50001)
+        _server, port, moved = app.bind_server(self.HOST, 8876, span=2)
+        self.assertEqual(port, 50001)  # OS-assigned via bind to port 0
+        self.assertTrue(moved)
+
+    def test_bind_server_propagates_non_eaddrinuse_immediately(self):
+        mock = MagicMock(
+            side_effect=PermissionError(errno.EACCES, "Permission denied")
+        )
+        with patch.object(app, "ThreadingHTTPServer", mock):
+            with self.assertRaises(PermissionError) as caught:
+                app.bind_server(self.HOST, 80)
+        self.assertEqual(caught.exception.errno, errno.EACCES)
+        self.assertEqual(mock.call_count, 1)  # did not keep scanning
+
+    def test_resolve_port_returns_a_number_from_the_same_order(self):
+        self._fake_servers(busy={8876})
+        self.assertEqual(app.resolve_port(self.HOST, 8876), 8877)
+
+    # --- real-socket ownership + strict mode ---
+
+    def test_bind_server_retains_the_socket_and_reports_the_move(self):
+        busy = self._occupy()
+        server, port, moved = app.bind_server(self.HOST, busy)
+        self.addCleanup(server.server_close)
+        self.assertTrue(moved)
+        self.assertNotEqual(port, busy)
+        self.assertEqual(server.server_address[1], port)
+        # The returned server keeps its socket, so a second bind must move again.
+        other, other_port, _ = app.bind_server(self.HOST, busy)
+        self.addCleanup(other.server_close)
+        self.assertNotIn(other_port, {busy, port})
+
+    def test_strict_port_raises_eaddrinuse_when_preferred_is_taken(self):
+        busy = self._occupy()
+        with self.assertRaises(OSError) as caught:
+            app.bind_server(self.HOST, busy, strict=True)
+        self.assertEqual(caught.exception.errno, errno.EADDRINUSE)
+
+    # --- pure candidate order ---
+
+    def test_port_candidates_are_deterministic_and_bounded(self):
+        self.assertEqual(app._port_candidates(8876, 3), [8876, 8877, 8878, 8879, 0])
+        self.assertEqual(app._port_candidates(0, 5), [0])  # explicit ephemeral request
+        self.assertEqual(app._port_candidates(65535, 10), [65535, 0])  # clamped at max
+        with self.assertRaises(ValueError):
+            app._port_candidates(70000, 3)  # out of range
+        with self.assertRaises(ValueError):
+            app._port_candidates(8876, -1)  # negative span
+
+    # --- main() output + CLI exit codes ---
+
+    def test_main_prints_actual_url_and_warns_on_move(self):
+        fake = MagicMock()
+        fake.serve_forever.side_effect = KeyboardInterrupt
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(sys, "argv", ["app.py"]), patch.object(
+            app, "bind_server", return_value=(fake, 8877, True)
+        ) as bind, contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            app.main()
+        self.assertIn("http://127.0.0.1:8877", out.getvalue())
+        self.assertIn("ssh -L 8877:127.0.0.1:8877", out.getvalue())
+        self.assertIn("preferred port 8876 is in use", err.getvalue())
+        self.assertFalse(bind.call_args.kwargs["strict"])
+        fake.server_close.assert_called_once()
+
+    def test_main_strict_port_exits_with_status_2_when_busy(self):
+        busy_error = OSError(errno.EADDRINUSE, "Address already in use")
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(
+            sys, "argv", ["app.py", "--port", "8876", "--strict-port"]
+        ), patch.object(
+            app, "bind_server", side_effect=busy_error
+        ), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as caught:
+                app.main()
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("--strict-port", err.getvalue())
+
+    def test_main_rejects_out_of_range_port(self):
+        err = io.StringIO()
+        with patch.object(sys, "argv", ["app.py", "--port", "70000"]), (
+            contextlib.redirect_stderr(err)
+        ):
+            with self.assertRaises(SystemExit) as caught:
+                app.main()
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("between 0 and 65535", err.getvalue())
 
 
 if __name__ == "__main__":

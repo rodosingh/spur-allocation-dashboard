@@ -77,15 +77,30 @@ Run on a SPUR login host, from this directory:
 python3 app.py
 ```
 
-Open `http://127.0.0.1:8876`.
+Open the URL the server prints. On a **shared login node** several colleagues
+may run the dashboard at once, so port `8876` is only a *preference*: if it is
+already taken, the server automatically falls back to the next free port
+(scanning `8877`, `8878`, …, then an OS-assigned port) instead of crashing with
+`Address already in use`. It always prints the **actual** bound URL plus a
+matching SSH-tunnel line on startup — trust that line rather than assuming
+`8876`:
 
-If that port is occupied:
-
-```bash
-python3 app.py --port 8877
+```text
+Spur dashboard: http://127.0.0.1:8877
+SSH tunnel:     ssh -L 8877:127.0.0.1:8877 <spur-login-host>
 ```
 
-For a remote login host, tunnel from your workstation:
+Pass `--port N` to change the preferred port (it still auto-moves if `N` is
+busy). Add `--strict-port` to bind exactly `--port` and fail loudly instead of
+moving — handy for a fixed SSH tunnel or a script:
+
+```bash
+python3 app.py --port 8900                 # prefer 8900, auto-move if busy
+python3 app.py --port 8900 --strict-port   # bind 8900 or exit
+```
+
+For a remote login host, tunnel from your workstation with the port the server
+printed (it may not be `8876` on a shared node):
 
 ```bash
 ssh -L 8876:127.0.0.1:8876 <spur-login-host>
@@ -166,7 +181,13 @@ server with:
 NODEHOLD_NAME=hold python3 app.py
 ```
 
-Two people on one login host must each pick a distinct `--port`.
+Multiple people can now run the dashboard on one login host without
+coordinating: each server auto-selects a free port and prints the URL it bound,
+so colleagues no longer clash on `8876`. `--port` only sets a *preferred*
+starting point. Note that separate ports isolate the servers but are not access
+control — any local user can reach any loopback port, and the CSRF token guards
+browser requests, not other local processes — so keep using per-user SSH
+tunnels rather than a shared non-loopback bind.
 
 ## Views
 
