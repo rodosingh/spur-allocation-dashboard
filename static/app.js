@@ -254,6 +254,19 @@ function updateRequestPreview() {
     return;
   }
   const mode = selectedMode();
+  const strategy = mode === "chain" ? $("#strategy").value : "start";
+  // Submit-limited pools (amd-burst-qos caps at 4 submitted) allow a chain of at
+  // most maxSubmitPerUser-1, so clamp the depth value DOWN (never up) BEFORE the
+  // preview reads it -- switching to burst snaps depth to 3 instead of erroring.
+  // Race ignores the selected pool (it submits across several), so leave raced
+  // chains unrestricted.
+  if (pool.maxSubmitPerUser && mode === "chain" && strategy !== "race") {
+    const maxDepth = Math.max(0, pool.maxSubmitPerUser - 1);
+    $("#chain-depth").max = maxDepth;
+    if (Number($("#chain-depth").value) > maxDepth) $("#chain-depth").value = String(maxDepth);
+  } else {
+    $("#chain-depth").max = 64;
+  }
   const gpus = $("#gpus").value;
   const nodes = $("#nodes").value;
   const cpus = $("#cpus").value || "auto";
@@ -278,11 +291,6 @@ function updateRequestPreview() {
     `Priority ${pool.priority ?? "?"} · preempt ${pool.preemptMode || "?"} · ` +
       `${pool.usedNodes}/${pool.nodeCap ?? "?"} nodes used`,
   );
-  if (pool.maxSubmitPerUser && selectedMode() === "chain") {
-    $("#chain-depth").max = Math.max(0, pool.maxSubmitPerUser - 1);
-  } else {
-    $("#chain-depth").max = 64;
-  }
   const needsSafety = pool.preemptMode === "cancel" || (pool.priority ?? 0) < floor;
   $("#advanced-options").classList.toggle(
     "hidden",
