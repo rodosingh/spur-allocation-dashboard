@@ -4,13 +4,16 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import errno
 import json
 import os
+import re
 import secrets
 import socket
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -29,6 +32,20 @@ CSRF_TOKEN = secrets.token_urlsafe(32)
 STORE = RequestStore()
 MUTATION_LOCK = threading.Lock()
 READ_ONLY = os.environ.get("SPUR_DASHBOARD_READ_ONLY", "") == "1"
+# Shared deployments serve many browsers from one login node: cache scheduler
+# reads so viewer count does not multiply squeue load.
+CACHE_SECONDS = max(0, int(os.environ.get("SPUR_DASHBOARD_CACHE_SECONDS") or 0))
+REFRESH_SECONDS = max(15, int(os.environ.get("SPUR_DASHBOARD_REFRESH_SECONDS") or 30))
+TEAM_FILE = Path(
+    os.environ.get("SPUR_DASHBOARD_TEAM_FILE")
+    or Path.home() / ".spur-dashboard" / "team.json"
+).expanduser()
+TEAM_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+GPU_UTIL_DIR = Path(os.environ.get("SPUR_GPU_UTIL_DIR") or "/shared_nfs/spur-gpu-util")
+UTILIZATION_DEFAULTS = {"lowUtilPercent": 10.0, "minLowHours": 2.0, "windowHours": 24.0}
+SAMPLE_SECONDS = 300
+# A gap longer than this means the sampler was not running; don't count it.
+MAX_SAMPLE_GAP = 900
 
 PREFERRED_PORT = 8876
 PORT_SCAN_SPAN = 64
@@ -39,6 +56,72 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_CACHE: dict[str, tuple[float, Any]] = {}
+_CACHE_LOCKS: dict[str, threading.Lock] = {}
+_CACHE_GUARD = threading.Lock()
+
+
+def cached(key: str, producer: Callable[[], Any]) -> Any:
+    """Return ``producer()``, reusing a result younger than CACHE_SECONDS.
+
+    A per-key lock makes concurrent viewers wait for one scheduler call instead
+    of each issuing their own.
+    """
+    if not CACHE_SECONDS:
+        return producer()
+    with _CACHE_GUARD:
+        lock = _CACHE_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        hit = _CACHE.get(key)
+        if hit and time.monotonic() - hit[0] < CACHE_SECONDS:
+            return copy.deepcopy(hit[1])
+        value = producer()
+        _CACHE[key] = (time.monotonic(), value)
+        return copy.deepcopy(value)
+
+
+def load_team() -> dict[str, Any]:
+    """Read the optional team file: {"users": [...], "focusQos": [...]}.
+
+    Re-read on every call so edits apply without a restart.
+    """
+    config: dict[str, Any] = {
+        "users": [],
+        "focusQos": [],
+        "utilization": dict(UTILIZATION_DEFAULTS),
+        "error": None,
+    }
+    try:
+        raw = json.loads(TEAM_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return config
+    except (OSError, ValueError) as error:
+        config["error"] = f"{TEAM_FILE}: {error}"
+        return config
+    if not isinstance(raw, dict):
+        config["error"] = f"{TEAM_FILE}: expected a JSON object"
+        return config
+    for key in ("users", "focusQos"):
+        values = raw.get(key) or []
+        if not isinstance(values, list):
+            continue
+        config[key] = list(
+            dict.fromkeys(
+                str(value).strip()
+                for value in values
+                if TEAM_NAME_PATTERN.fullmatch(str(value).strip())
+            )
+        )
+    thresholds = raw.get("utilization")
+    if isinstance(thresholds, dict):
+        for key, default in UTILIZATION_DEFAULTS.items():
+            try:
+                config["utilization"][key] = float(thresholds.get(key, default))
+            except (TypeError, ValueError):
+                pass
+    return config
+
+
 def capabilities() -> dict[str, Any]:
     return {
         "schemaVersion": 1,
@@ -47,6 +130,8 @@ def capabilities() -> dict[str, Any]:
         "minPriority": holder.MIN_PRIORITY,
         "partition": scheduler.PARTITION,
         "user": scheduler.USERNAME,
+        "readOnly": READ_ONLY,
+        "refreshSeconds": REFRESH_SECONDS,
         "requestModes": ["chain", "normal"],
         "chainStrategies": ["start", "adopt", "race"],
         "chainActions": sorted(holder.SAFE_ACTIONS),
@@ -125,8 +210,221 @@ def build_pools() -> dict[str, Any]:
         by_qos.setdefault(job["qos"], []).append(job)
     for pool in pools.get("pools", []):
         pool["jobs"] = by_qos.get(str(pool.get("qos", "")), [])
+    focus = load_team()["focusQos"]
+    if focus:
+        rank = {qos: index for index, qos in enumerate(focus)}
+        for pool in pools.get("pools", []):
+            pool["focus"] = pool.get("qos") in rank
+        pools["pools"] = sorted(
+            pools.get("pools", []),
+            key=lambda pool: rank.get(str(pool.get("qos", "")), len(rank)),
+        )
     pools["updatedAt"] = utc_now()
     return pools
+
+
+def summarize_samples(
+    samples: list[dict[str, Any]], low_percent: float, now: float
+) -> dict[str, Any]:
+    """Weight each sample by the time until the next one (capped at MAX_SAMPLE_GAP)."""
+    samples = sorted(samples, key=lambda sample: sample["ts"])
+    gpu_seconds = util_seconds = idle_gpu_seconds = 0.0
+    low_run = longest_low = 0.0
+    last_error = None
+    measured = 0
+    for index, sample in enumerate(samples):
+        if index + 1 < len(samples):
+            gap = samples[index + 1]["ts"] - sample["ts"]
+        else:
+            gap = min(SAMPLE_SECONDS, max(0.0, now - sample["ts"]))
+        weight = max(0.0, min(MAX_SAMPLE_GAP, gap))
+        utils = [
+            float(gpu["util"])
+            for gpu in sample.get("gpus") or []
+            if isinstance(gpu, dict) and isinstance(gpu.get("util"), (int, float))
+        ]
+        if not utils:
+            last_error = sample.get("error") or "no GPU readings"
+            continue
+        measured += 1
+        gpu_seconds += len(utils) * weight
+        util_seconds += sum(utils) * weight
+        idle_gpu_seconds += sum(1 for util in utils if util < low_percent) * weight
+        if sum(utils) / len(utils) < low_percent:
+            low_run += weight
+            longest_low = max(longest_low, low_run)
+        else:
+            low_run = 0.0
+    return {
+        "samples": measured,
+        "gpuHours": round(gpu_seconds / 3600, 2),
+        "avgUtil": round(util_seconds / gpu_seconds, 1) if gpu_seconds else None,
+        "idleGpuHours": round(idle_gpu_seconds / 3600, 2),
+        "longestLowHours": round(longest_low / 3600, 2),
+        "currentLowHours": round(low_run / 3600, 2),
+        "firstSampleAt": samples[0]["ts"] if samples else None,
+        "lastSampleAt": samples[-1]["ts"] if samples else None,
+        "lastError": last_error,
+    }
+
+
+def read_samples(path: Path, cutoff: float) -> list[dict[str, Any]]:
+    samples = []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    sample = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(sample, dict) and isinstance(sample.get("ts"), (int, float)) and sample["ts"] >= cutoff:
+                    samples.append(sample)
+    except OSError:
+        return []
+    return samples
+
+
+def build_utilization() -> dict[str, Any]:
+    """Per-job and per-user GPU utilization for team users over the window.
+
+    Samples come from gpu_sampler.py running inside each job; running team jobs
+    with no samples are listed as not reporting.
+    """
+    team = load_team()
+    limits = team["utilization"]
+    low_percent = limits["lowUtilPercent"]
+    min_low_hours = limits["minLowHours"]
+    now = time.time()
+    cutoff = now - limits["windowHours"] * 3600
+    users = team["users"]
+    running = {
+        job["id"]: job
+        for job in scheduler.get_queue("all")
+        if job["user"] in users and job["state"] == "RUNNING"
+    }
+    rows: list[dict[str, Any]] = []
+    reported: set[str] = set()
+    for user in users:
+        user_dir = GPU_UTIL_DIR / user
+        try:
+            paths = sorted(user_dir.glob("*.jsonl"))
+        except OSError:
+            paths = []
+        for path in paths:
+            try:
+                if path.stat().st_mtime < cutoff:
+                    continue
+            except OSError:
+                continue
+            samples = read_samples(path, cutoff)
+            if not samples:
+                continue
+            job_id, _, node = path.stem.partition(".")
+            job = running.get(job_id, {})
+            stats = summarize_samples(samples, low_percent, now)
+            reported.add(job_id)
+            rows.append(
+                {
+                    "user": user,
+                    "id": job_id,
+                    "node": node,
+                    "name": job.get("name", ""),
+                    "qos": job.get("qos", ""),
+                    "state": "RUNNING" if job else "ENDED",
+                    "reporting": True,
+                    "flagged": stats["longestLowHours"] >= min_low_hours,
+                    **stats,
+                }
+            )
+    for job_id, job in running.items():
+        if job_id in reported:
+            continue
+        rows.append(
+            {
+                "user": job["user"],
+                "id": job_id,
+                "node": job["nodeListOrReason"],
+                "name": job["name"],
+                "qos": job["qos"],
+                "state": "RUNNING",
+                "reporting": False,
+                "flagged": False,
+                "elapsed": job["elapsed"],
+            }
+        )
+    rows.sort(key=lambda row: (users.index(row["user"]), not row["flagged"], row["state"] != "RUNNING", row["id"]))
+    members = []
+    for user in users:
+        mine = [row for row in rows if row["user"] == user]
+        measured = [row for row in mine if row["reporting"]]
+        gpu_hours = sum(row["gpuHours"] for row in measured)
+        weighted = sum(row["avgUtil"] * row["gpuHours"] for row in measured if row["avgUtil"] is not None)
+        members.append(
+            {
+                "user": user,
+                "gpuHours": round(gpu_hours, 2),
+                "avgUtil": round(weighted / gpu_hours, 1) if gpu_hours else None,
+                "idleGpuHours": round(sum(row["idleGpuHours"] for row in measured), 2),
+                "flaggedJobs": sum(1 for row in mine if row["flagged"]),
+                "unreportedJobs": sum(1 for row in mine if not row["reporting"]),
+            }
+        )
+    return {
+        "updatedAt": utc_now(),
+        "dataDir": str(GPU_UTIL_DIR),
+        "thresholds": limits,
+        "members": members,
+        "jobs": rows,
+    }
+
+
+def build_team() -> dict[str, Any]:
+    """Active jobs for the configured team plus pool-wide focus-QoS totals."""
+    team = load_team()
+    jobs = scheduler.get_queue("all")
+    users = set(team["users"])
+    focus = team["focusQos"]
+    members: dict[str, dict[str, Any]] = {
+        user: {"user": user, "running": 0, "pending": 0, "runningNodes": 0}
+        for user in team["users"]
+    }
+    qos_totals: dict[str, dict[str, Any]] = {
+        qos: {"qos": qos, "running": 0, "pending": 0, "runningNodes": 0, "teamRunningNodes": 0}
+        for qos in focus
+    }
+    team_jobs = []
+    for job in jobs:
+        job["isMine"] = job["user"] == scheduler.USERNAME
+        running = job["state"] == "RUNNING"
+        totals = qos_totals.get(job["qos"])
+        if totals:
+            totals["running" if running else "pending"] += 1
+            if running:
+                totals["runningNodes"] += job["nodes"]
+                if job["user"] in users:
+                    totals["teamRunningNodes"] += job["nodes"]
+        if job["user"] not in users:
+            continue
+        team_jobs.append(job)
+        member = members[job["user"]]
+        member["running" if running else "pending"] += 1
+        if running:
+            member["runningNodes"] += job["nodes"]
+    team_jobs.sort(
+        key=lambda job: (
+            team["users"].index(job["user"]),
+            job["state"] != "RUNNING",
+            int(job["id"]) if job["id"].isdigit() else 0,
+        )
+    )
+    return {
+        "updatedAt": utc_now(),
+        "configFile": str(TEAM_FILE),
+        "configError": team["error"],
+        "members": list(members.values()),
+        "focusQos": [qos_totals[qos] for qos in focus],
+        "jobs": team_jobs,
+    }
 
 
 def build_top_users(account: str) -> dict[str, Any]:
@@ -258,15 +556,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def _api_get(self, path: str, query: dict[str, list[str]]) -> bool:
         routes: dict[str, Callable[[], dict[str, Any]]] = {
             "/api/capabilities": capabilities,
-            "/api/status": build_status,
-            "/api/pools": build_pools,
-            "/api/history": build_history,
-            "/api/diagnostics": holder.get_doctor,
+            "/api/status": lambda: cached("status", build_status),
+            "/api/pools": lambda: cached("pools", build_pools),
+            "/api/team": lambda: cached("team", build_team),
+            "/api/utilization": lambda: cached("utilization", build_utilization),
+            "/api/history": lambda: cached("history", build_history),
+            "/api/diagnostics": lambda: cached("diagnostics", holder.get_doctor),
             "/api/csrf-token": lambda: {"token": CSRF_TOKEN},
         }
         if path == "/api/queue":
             scope = query.get("scope", ["mine"])[0]
-            jobs = scheduler.get_queue(scope)
+            if scope not in {"mine", "all"}:
+                raise ValueError("Queue scope must be 'mine' or 'all'")
+            jobs = cached(f"queue:{scope}", lambda: scheduler.get_queue(scope))
             for job in jobs:
                 job["isMine"] = job["user"] == scheduler.USERNAME
             self.send_json(
@@ -281,7 +583,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return True
         if path == "/api/top-users":
             account = query.get("account", [""])[0]
-            self.send_json(HTTPStatus.OK, build_top_users(account))
+            self.send_json(
+                HTTPStatus.OK,
+                cached(f"top-users:{account}", lambda: build_top_users(account)),
+            )
             return True
         function = routes.get(path)
         if not function:

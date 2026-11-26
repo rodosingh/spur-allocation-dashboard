@@ -1,0 +1,11 @@
+{
+  "webhookUrl": "",
+  "publicDashboardUrl": "http://<tunnel-host>:8876",
+  "qos": ["amd-brain-models-qos"],
+  "reminderHours": 2,
+  "pollSeconds": 60,
+  "digestTime": "11:00",
+  "cardMentions": false,
+  "emailDomain": "amd.com",
+  "emails": {}
+}

@@ -118,6 +118,71 @@ python3 app.py --read-only
 
 Every POST endpoint returns `403` in read-only mode.
 
+## Shared read-only deployment
+
+To let colleagues watch the dashboard without SSH, run it read-only on a login
+node and publish it from an always-on internal host:
+
+- `deploy/serve-shared.sh` starts `app.py --read-only` on loopback port 18876
+  with a 90 s server-side cache (`SPUR_DASHBOARD_CACHE_SECONDS`) and a 120 s
+  browser refresh (`SPUR_DASHBOARD_REFRESH_SECONDS`), so viewer count does not
+  multiply scheduler load.
+- `deploy/spur-dashboard-tunnel.service` is a `systemd --user` unit for the
+  publishing host. It runs that script over SSH with a dedicated key and
+  forwards `0.0.0.0:8876` to it, restarting on any disconnect.
+
+Read-only mode hides every mutation control and opens on the **Team** tab. The
+team view reads `~/.spur-dashboard/team.json` on the login node (override with
+`SPUR_DASHBOARD_TEAM_FILE`) on every refresh, so edits apply without a restart;
+see `deploy/team.example.json`. `focusQos` pools are pinned to the top of
+**Pools** and summarised pool-wide on **Team**.
+
+Everything is still read as the account that runs the server, and there is no
+authentication: never publish a server without `--read-only`.
+
+### Allocation alerts
+
+`notifier.py` (unit: `deploy/spur-dashboard-notifier.service`) polls `/api/team`
+and posts a Teams Adaptive Card that @mentions the owner when a team job in a
+watched QoS starts running, plus one reminder after `reminderHours`. Configure it
+in `~/.config/spur-dashboard/notify.json` (see `deploy/notify.example.json`):
+`webhookUrl` is a Teams Workflows "Post to a channel when a webhook request is
+received" URL, and `emails` maps usernames to the addresses used for mentions.
+With no `webhookUrl` it only logs to the journal. The first run records jobs that
+are already running without alerting.
+
+### GPU utilization
+
+The scheduler only knows what a job was allocated, so utilization is measured
+inside each job by `gpu_sampler.py`. Every 5 minutes it records per-GPU
+utilization, VRAM and power (`amd-smi`, falling back to `rocm-smi`) to
+`/shared_nfs/spur-gpu-util/<user>/<job>.<node>.jsonl` (override with
+`SPUR_GPU_UTIL_DIR`), and exits when the script that started it does. Samples
+older than 7 days are pruned.
+
+- **Chains** started with the bundled `node_holder.sh` start the sampler
+  automatically on the holding node (`NODEHOLD_GPU_SAMPLER=off` disables it).
+- **Any other job**: add one line near the top of the job script, using your
+  clone's path:
+
+  ```bash
+  python3 ~/code/spur-allocation-dashboard/gpu_sampler.py &
+  ```
+
+  For multi-node jobs start one per node:
+  `srun --overlap --ntasks-per-node=1 python3 .../gpu_sampler.py &`.
+- Check it works on a node with `python3 gpu_sampler.py --once`.
+
+The **Utilization** tab shows, per team user and job over the last 24 hours,
+average GPU utilization, GPU-hours, idle GPU-hours and the longest low stretch.
+A job is flagged when it averages below `lowUtilPercent` for `minLowHours`
+(defaults 10% and 2 h, set under `utilization` in `team.json`). Running team
+jobs with no samples show as **not reporting**.
+
+`notifier.py` posts a daily digest at `digestTime` (default `11:00`, host local
+time): one message per user with a flagged job, @mentioning them. Nothing is
+posted when nobody is flagged.
+
 ## Request modes
 
 ### Chain

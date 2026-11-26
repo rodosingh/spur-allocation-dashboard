@@ -4,6 +4,8 @@ const state = {
   status: null,
   pools: null,
   sqa: null,
+  team: null,
+  utilization: null,
   history: null,
   diagnostics: null,
   currentTab: "status",
@@ -680,7 +682,7 @@ function jobRow(job, { allowActions = true } = {}) {
         ),
       );
     }
-    row.append(cell(actions));
+    row.append(cell(actions, "action-col"));
   }
   return row;
 }
@@ -712,7 +714,7 @@ function renderQueueTable(hostSelector, jobs, allowActions = false) {
   for (const label of ["Job", "Account / QoS", "Priority", "State", "Resources", "Time", "Node / reason"]) {
     headRow.append(element("th", "", label));
   }
-  if (allowActions) headRow.append(element("th", "", "Action"));
+  if (allowActions) headRow.append(element("th", "action-col", "Action"));
   head.append(headRow);
   const body = element("tbody");
   if (!jobs.length) {
@@ -842,7 +844,7 @@ async function checkSeats(pool, { silent = false } = {}) {
 // per visit (switchTab clears the guard), never on background polls, and probe
 // failures stay silent (the row keeps its "?" and a manual retry button).
 function autoProbePools() {
-  if (state.currentTab !== "pools") return;
+  if (state.currentTab !== "pools" || state.capabilities?.readOnly) return;
   for (const pool of state.pools?.pools || []) {
     if (pool.poolUsedNodes != null) continue; // already live from the controller
     if (state.poolSeatsAutoFired.has(pool.qos)) continue;
@@ -857,7 +859,10 @@ function renderPools() {
   autoProbePools();
   for (const pool of state.pools?.pools || []) {
     const key = `${pool.account}|${pool.qos}`;
-    const row = element("tr", `pool-row${state.expandedPools.has(key) ? " expanded" : ""}`);
+    const row = element(
+      "tr",
+      `pool-row${state.expandedPools.has(key) ? " expanded" : ""}${pool.focus ? " focus-pool" : ""}`,
+    );
     row.tabIndex = 0;
     row.setAttribute("role", "button");
     row.setAttribute("aria-expanded", String(state.expandedPools.has(key)));
@@ -1134,10 +1139,140 @@ async function loadLog() {
   }
 }
 
+function summaryCard(title, value, copy, ok = true) {
+  const card = element("article", "diagnostic-card");
+  card.append(
+    element("h3", "", title),
+    element("div", `diagnostic-value${ok ? "" : " bad"}`, value),
+    element("p", "", copy),
+  );
+  return card;
+}
+
+function renderTeam() {
+  const team = state.team;
+  const pools = $("#team-pools");
+  const members = $("#team-members");
+  pools.replaceChildren();
+  members.replaceChildren();
+  if (!team) return;
+  setText(
+    "#team-config-note",
+    team.configError
+      ? `Team config error: ${team.configError}`
+      : `Edit ${team.configFile} to change users and pools · updated ${new Date(team.updatedAt).toLocaleTimeString()}`,
+  );
+  for (const qos of team.focusQos) {
+    pools.append(
+      summaryCard(
+        qos.qos,
+        `${qos.running} running · ${qos.pending} queued`,
+        `${qos.runningNodes} nodes in use pool-wide, ${qos.teamRunningNodes} by the team`,
+        qos.pending === 0,
+      ),
+    );
+  }
+  if (!team.members.length) {
+    members.append(element("div", "empty table-card", `No team users configured. Add them to ${team.configFile}.`));
+  }
+  for (const member of team.members) {
+    members.append(
+      summaryCard(
+        member.user,
+        `${member.running} running · ${member.pending} queued`,
+        `${member.runningNodes} node${member.runningNodes === 1 ? "" : "s"} held`,
+        member.running > 0 || member.pending === 0,
+      ),
+    );
+  }
+  renderQueueTable("#team-table", team.jobs);
+}
+
+async function loadTeam() {
+  try {
+    state.team = await fetchJson("/api/team");
+    renderTeam();
+  } catch (error) {
+    showMessage(error.message, true);
+  }
+}
+
+function percent(value) {
+  return value === null || value === undefined ? "—" : `${value}%`;
+}
+
+function renderUtilization() {
+  const data = state.utilization;
+  const members = $("#util-members");
+  const body = $("#util-jobs");
+  members.replaceChildren();
+  body.replaceChildren();
+  if (!data) return;
+  const limits = data.thresholds;
+  setText(
+    "#util-note",
+    `Flagged: average below ${limits.lowUtilPercent}% for ${limits.minLowHours}h+ · samples from ${data.dataDir} · updated ${new Date(data.updatedAt).toLocaleTimeString()}`,
+  );
+  for (const member of data.members) {
+    const copy = [
+      `${member.gpuHours} GPU-h measured, ${member.idleGpuHours} idle`,
+      member.unreportedJobs ? `${member.unreportedJobs} running job(s) not reporting` : "",
+    ].filter(Boolean).join(" · ");
+    members.append(
+      summaryCard(
+        member.user,
+        member.avgUtil === null ? "no data" : `${member.avgUtil}% avg`,
+        copy,
+        member.flaggedJobs === 0,
+      ),
+    );
+  }
+  if (!data.jobs.length) {
+    const row = element("tr");
+    const empty = cell("No running or recently measured team jobs.", "empty");
+    empty.colSpan = 8;
+    row.append(empty);
+    body.append(row);
+    return;
+  }
+  for (const job of data.jobs) {
+    const row = element("tr", job.flagged ? "flagged" : "");
+    const stateLabel = job.reporting ? job.state : "NOT REPORTING";
+    row.append(
+      cell(primaryCell(job.id, [job.name, job.node].filter(Boolean).join(" · ")), "primary-cell"),
+      cell(job.user),
+      cell(statusBadge(job.flagged ? "LOW UTIL" : stateLabel)),
+      cell(job.reporting ? percent(job.avgUtil) : "—"),
+      cell(job.reporting ? String(job.gpuHours) : "—"),
+      cell(job.reporting ? String(job.idleGpuHours) : "—"),
+      cell(job.reporting ? `${job.longestLowHours}h` : "—"),
+      cell(
+        job.reporting
+          ? job.lastError && !job.samples
+            ? `error: ${job.lastError}`
+            : new Date(job.lastSampleAt * 1000).toLocaleTimeString()
+          : `add gpu_sampler.py to this job (running ${job.elapsed || "?"})`,
+      ),
+    );
+    body.append(row);
+  }
+}
+
+async function loadUtilization() {
+  try {
+    state.utilization = await fetchJson("/api/utilization");
+    renderUtilization();
+  } catch (error) {
+    showMessage(error.message, true);
+  }
+}
+
 function switchTab(name) {
   state.currentTab = name;
   $$(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
   $$(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.dataset.panel === name));
+  if (name === "team") void loadTeam();
+  if (name === "utilization") void loadUtilization();
   if (name === "sq") renderQueueTable("#sq-table", state.status?.jobs || [], true);
   if (name === "sqa") void loadSqa();
   if (name === "pools") {
@@ -1171,6 +1306,9 @@ async function refreshCore() {
     renderPools();
     renderEndTargets();
     if (state.currentTab === "sq") renderQueueTable("#sq-table", status.jobs, true);
+    if (state.currentTab === "team") await loadTeam();
+    if (state.currentTab === "utilization") await loadUtilization();
+    if (state.currentTab === "sqa") await loadSqa(true);
     setText("#health-label", Object.keys(status.errors || {}).length ? "Partial data" : "Scheduler online");
     setText("#updated-at", `Updated ${new Date(status.updatedAt).toLocaleTimeString()}`);
     $("#health-dot").className = Object.keys(status.errors || {}).length ? "health-dot error" : "health-dot";
@@ -1183,6 +1321,20 @@ async function refreshCore() {
     state.refreshing = false;
     $("#refresh-button").disabled = false;
   }
+}
+
+async function startPolling() {
+  try {
+    state.capabilities = await fetchJson("/api/capabilities");
+  } catch (error) {
+    showMessage(error.message, true);
+  }
+  if (state.capabilities?.readOnly) {
+    document.body.classList.add("read-only");
+    switchTab("team");
+  }
+  await refreshCore();
+  setInterval(refreshCore, (state.capabilities?.refreshSeconds || 30) * 1000);
 }
 
 function initialize() {
@@ -1219,8 +1371,7 @@ function initialize() {
   $("#log-load").addEventListener("click", loadLog);
 
   updateRequestMode();
-  void refreshCore();
-  setInterval(refreshCore, 30_000);
+  void startPolling();
   // Keep probed pools (ones you hold no job in) near-live while viewing
   // Pools: re-probe them on an interval so used/queued tracks the CLI.
   setInterval(() => {

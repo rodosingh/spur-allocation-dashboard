@@ -1,0 +1,18 @@
+# systemd --user unit: Teams alerts when a watched-QoS team job starts running.
+# Reads ~/.config/spur-dashboard/notify.json (see deploy/notify.example.json);
+# config edits apply on the next poll. Install alongside the tunnel unit:
+#   cp deploy/spur-dashboard-notifier.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now spur-dashboard-notifier
+[Unit]
+Description=SPUR dashboard allocation notifier
+After=spur-dashboard-tunnel.service
+Wants=spur-dashboard-tunnel.service
+
+[Service]
+ExecStart=/usr/bin/python3 -u %h/code/spur-allocation-dashboard/notifier.py
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

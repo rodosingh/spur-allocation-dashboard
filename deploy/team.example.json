@@ -1,0 +1,5 @@
+{
+  "users": ["alice", "bob"],
+  "focusQos": ["amd-brain-models-qos", "amd-burst-qos"],
+  "utilization": {"lowUtilPercent": 10, "minLowHours": 2, "windowHours": 24}
+}

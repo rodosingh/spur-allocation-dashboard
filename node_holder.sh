@@ -1097,6 +1097,16 @@ run_on_start() {
     return 0
 }
 
+# Feeds the dashboard's Utilization tab. Best effort: a missing python3, amd-smi
+# or shared directory must never cost the node. The sampler exits with the hold.
+start_gpu_sampler() {
+    [ "${NODEHOLD_GPU_SAMPLER:-}" = off ] && return 0
+    local sampler=${NODEHOLD_GPU_SAMPLER:-$(dirname "$SELF")/gpu_sampler.py}
+    [ -r "$sampler" ] && command -v python3 >/dev/null 2>&1 || return 0
+    nohup python3 "$sampler" >/dev/null 2>&1 &
+    say "recording GPU utilization with ${sampler} (NODEHOLD_GPU_SAMPLER=off to disable)"
+}
+
 cmd_hold() {
     [ -n "${1:-}" ] && { use_chain "$1"; load_profile; }
     mkdir -p "$LOG_DIR"
@@ -1129,6 +1139,7 @@ cmd_hold() {
         [ "$remaining" -gt 0 ] || return 0
         [ "$HOLD_SECONDS" -le "$remaining" ] || HOLD_SECONDS=$remaining
     fi
+    start_gpu_sampler
     say "sleeping ${HOLD_SECONDS}s, then handing ${node} to the next link"
     sleep "$HOLD_SECONDS"
     say "=== ${JOB_NAME} ${jid} releasing ${node} at $(date -Is) ==="

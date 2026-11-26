@@ -1,0 +1,30 @@
+# systemd --user unit for the tunnel host (e.g. the Strix Halo box).
+# Starts the read-only dashboard on a SPUR login node and publishes it on
+# 0.0.0.0:8876 of this host.
+#
+# LOGIN_HOST must be an ~/.ssh/config alias that logs in non-interactively with
+# a dedicated key (IdentityFile, IdentitiesOnly yes, BatchMode yes); no agent
+# is available to a systemd service.
+#
+# Install:
+#   cp deploy/spur-dashboard-tunnel.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now spur-dashboard-tunnel
+#   sudo loginctl enable-linger $USER
+[Unit]
+Description=Shared read-only SPUR dashboard (tunnel to Crusoe login node)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=LOGIN_HOST=crusoe-dash
+Environment=PUBLIC_PORT=8876
+Environment=REMOTE_PORT=18876
+ExecStart=/usr/bin/ssh -tt -o ExitOnForwardFailure=yes -o GatewayPorts=yes \
+    -L 0.0.0.0:${PUBLIC_PORT}:127.0.0.1:${REMOTE_PORT} \
+    ${LOGIN_HOST} SPUR_DASHBOARD_SHARED_PORT=${REMOTE_PORT} code/spur-allocation-dashboard/deploy/serve-shared.sh
+Restart=always
+RestartSec=20
+
+[Install]
+WantedBy=default.target

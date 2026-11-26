@@ -224,6 +224,8 @@
       </section>
 
       <nav class="tabs" aria-label="Dashboard views">
+        <button class="tab" data-tab="team" type="button">Team</button>
+        <button class="tab" data-tab="utilization" type="button">Utilization</button>
         <button class="tab active" data-tab="status" type="button">Status</button>
         <button class="tab" data-tab="pools" type="button">Pools</button>
         <button class="tab" data-tab="sq" type="button">SQ <small>mine</small></button>
@@ -231,6 +233,35 @@
         <button class="tab" data-tab="history" type="button">Past requests</button>
         <button class="tab" data-tab="diagnostics" type="button">Diagnostics</button>
       </nav>
+
+      <section id="tab-team" class="tab-panel" data-panel="team">
+        <div class="section-heading">
+          <div><p class="eyebrow">TEAM</p><h2>Team jobs and focus pools</h2></div>
+          <p id="team-config-note">Users and pools come from the team config file.</p>
+        </div>
+        <div id="team-pools" class="diagnostic-grid"></div>
+        <div id="team-members" class="diagnostic-grid"></div>
+        <div id="team-table" class="queue-host"></div>
+      </section>
+
+      <section id="tab-utilization" class="tab-panel" data-panel="utilization">
+        <div class="section-heading">
+          <div><p class="eyebrow">GPU</p><h2>Utilization, last 24 hours</h2></div>
+          <p id="util-note">Measured inside each job by gpu_sampler.py.</p>
+        </div>
+        <div id="util-members" class="diagnostic-grid"></div>
+        <div class="table-card">
+          <div class="table-scroll">
+            <table>
+              <thead><tr>
+                <th>Job</th><th>User</th><th>State</th><th>Avg GPU util</th>
+                <th>GPU-hours</th><th>Idle GPU-hours</th><th>Longest low stretch</th><th>Last sample</th>
+              </tr></thead>
+              <tbody id="util-jobs"><tr><td colspan="8" class="empty">Open this tab to load utilization.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
 
       <section id="tab-status" class="tab-panel active" data-panel="status">
         <div class="section-heading">
@@ -246,7 +277,7 @@
             <table>
               <thead><tr>
                 <th>Job</th><th>Account / QoS</th><th>Priority</th><th>State</th>
-                <th>Resources</th><th>Time</th><th>Node / reason</th><th>Action</th>
+                <th>Resources</th><th>Time</th><th>Node / reason</th><th class="action-col">Action</th>
               </tr></thead>
               <tbody id="status-jobs"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
             </table>

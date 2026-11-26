@@ -1376,3 +1376,25 @@ dialog::backdrop {
     animation-iteration-count: 1 !important;
   }
 }
+
+tr.focus-pool td:nth-child(2) {
+  color: var(--amber);
+  font-weight: 700;
+}
+
+#team-pools,
+#team-members {
+  margin-bottom: 18px;
+}
+
+body.read-only .control-grid,
+body.read-only .chain-actions,
+body.read-only .row-actions,
+body.read-only .action-col,
+body.read-only .check-seats {
+  display: none;
+}
+
+tr.flagged {
+  background: rgb(242 185 75 / 8%);
+}
